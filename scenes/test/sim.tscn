@@ -1,6 +1,6 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://8dny4g7s3qgm"]
 
-[ext_resource type="Script" path="res://scenes/test/sim.gd" id="1_sim"]
+[ext_resource type="Script" uid="uid://dmhslis5g6au7" path="res://scenes/test/sim.gd" id="1_sim"]
 
-[node name="Sim" type="Node"]
+[node name="Sim" type="Node" unique_id=904917494]
 script = ExtResource("1_sim")
