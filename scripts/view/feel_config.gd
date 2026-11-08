@@ -17,6 +17,8 @@ const SPECS: Dictionary = {
 	"quick_stop_interval": [0.15, 0.0, 5.0],
 	"start_lock_sec": [0.3, 0.0, 5.0],
 	"result_delay": [0.25, 0.0, 5.0],
+	"pool_yellow_from": [1000.0, 0.0, 1000000000.0],
+	"pool_red_from": [1500.0, 0.0, 1000000000.0],
 }
 ## 릴 수만큼 값이 들어가는 항목. 키: [기본값 목록, 최솟값, 최댓값]
 const REEL_COUNT: int = 3
@@ -53,6 +55,10 @@ var quick_stop_interval: float = 0.15
 var start_lock_sec: float = 0.3
 ## 마지막 릴이 멈춘 뒤 정산·당첨 연출까지의 간격 (초)
 var result_delay: float = 0.25
+## POOL 숫자가 이 값 이상이면 노랑 (미만이면 주황)
+var pool_yellow_from: float = 1000.0
+## POOL 숫자가 이 값 이상이면 빨강 + 가벼운 깜빡임. pool_yellow_from보다 커야 한다.
+var pool_red_from: float = 1500.0
 ## 파일에서 읽다가 문제가 있어 기본값으로 대체한 항목 설명
 var errors: PackedStringArray = PackedStringArray()
 ## 파일을 읽고 JSON으로 해석하는 데 성공했는지 (항목별 범위 문제와는 별개)
@@ -98,6 +104,7 @@ func _read(raw: Dictionary) -> void:
 	for key: String in ARRAY_SPECS:
 		set(key, _read_array(raw, key))
 	_check_delay_before_auto_stop()
+	_check_pool_tiers()
 
 
 ## 릴 수만큼의 숫자 목록을 읽는다. 개수가 다르거나 하나라도 범위 밖이면 목록 전체를 기본값으로 쓴다.
@@ -129,6 +136,15 @@ func _check_delay_before_auto_stop() -> void:
 	reel_start_delay = PackedFloat64Array(ARRAY_SPECS["reel_start_delay"][0])
 	if _longest_delay() >= auto_stop_start:
 		reel_start_delay = PackedFloat64Array(NO_DELAY)
+
+
+## 노랑 기준이 빨강 기준 이상이면 단계가 성립하지 않으므로 둘 다 기본값으로 돌린다.
+func _check_pool_tiers() -> void:
+	if pool_yellow_from < pool_red_from:
+		return
+	errors.append("pool_yellow_from(%s)가 pool_red_from(%s)보다 작아야 해서 둘 다 기본값 사용" % [pool_yellow_from, pool_red_from])
+	pool_yellow_from = SPECS["pool_yellow_from"][0]
+	pool_red_from = SPECS["pool_red_from"][0]
 
 
 func _longest_delay() -> float:

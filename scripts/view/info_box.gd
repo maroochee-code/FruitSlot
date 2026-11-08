@@ -54,3 +54,7 @@ func value_text() -> String:
 
 func set_value_color(color: Color) -> void:
 	_value.add_theme_color_override("font_color", color)
+
+
+func value_color() -> Color:
+	return _value.get_theme_color("font_color")

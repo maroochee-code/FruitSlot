@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 0.5.0 — 2026-11-09 (5-A: 피버 카운터 패널과 POOL 색 단계)
+
+### 추가
+- `FeverPanel`(`scripts/view/fever_panel.gd`): 피버 카운터를 심볼별 한 줄(색 박스 + 이름 + ×남은 횟수)로 표시. 초기값 2 이상인 심볼이 마지막 1회 남으면 깜빡임(세븐 등 초기값 1은 제외)
+- POOL 숫자 색 3단계: 주황 → 노랑 → 빨강+깜빡임. 기준은 `feel.json`의 `pool_yellow_from`(1000), `pool_red_from`(1500)
+
+### 변경
+- 피버 카운터가 글자 한 덩어리(InfoBox)에서 `FeverPanel`로 교체 (노드 이름 `FeverBox` 유지)
+- `docs/기획서.md` 8·9장: 피버·풀 수치는 `balance.json`이 기준임을 명시, 풀 색 단계 추가
+- 로직·`balance.json` 변경 없음
+
 ## 0.4.1 — 2026-11-09 (5단계 선행 과제: 릴 연출 방식 변경)
 
 ### 추가

@@ -11,5 +11,7 @@
 	"auto_stop_interval": 0.4,
 	"quick_stop_interval": 0.15,
 	"start_lock_sec": 0.3,
-	"result_delay": 0.25
+	"result_delay": 0.25,
+	"pool_yellow_from": 1000,
+	"pool_red_from": 1500
 }

@@ -42,6 +42,8 @@ func _ready() -> void:
 	_test_initial_screen(main)
 	_test_layout(main)
 	_test_paytable(main)
+	_test_fever_panel(main)
+	_test_pool_color(main)
 	_test_keyboard(main)
 	_test_max_and_cancel(main)
 	await _test_spins(main)
@@ -63,6 +65,10 @@ func _check(condition: bool, label: String) -> void:
 
 func _box(main: Control, node_name: String) -> InfoBox:
 	return main.get_node(node_name) as InfoBox
+
+
+func _fever(main: Control) -> FeverPanel:
+	return main.get_node("FeverBox") as FeverPanel
 
 
 func _press(main: Control, keycode: Key) -> void:
@@ -125,6 +131,75 @@ func _test_paytable(main: Control) -> void:
 	var fever: Control = main.get_node("FeverBox")
 	_check(panel.position.y >= fever.position.y + fever.size.y, "배당표가 피버 카운터 아래")
 	_check(panel.position.y + panel.size.y <= 420.0, "배당표가 하단 바 위")
+
+
+## 깜빡임 시계를 0으로 돌린 뒤 켜짐(주기의 3/4 지점) 또는 꺼짐(1/4 지점) 상태로 맞춘다
+func _set_blink(main: Control, on: bool) -> void:
+	main.set("_blink_time", 0.0)
+	main.advance(main.BLINK_PERIOD * (0.75 if on else 0.25))
+
+
+func _test_fever_panel(main: Control) -> void:
+	var data: BalanceData = GameState.get_balance()
+	var panel: FeverPanel = _fever(main)
+	_check(panel.row_count() == data.fever_symbols.size(), "피버 카운터 줄 수 = balance.json 피버 대상 수")
+	var expected: PackedStringArray = PackedStringArray()
+	for symbol: String in data.fever_symbols:
+		expected.append("%s ×%d" % [data.symbol_names[symbol], data.fever_initial_counts[symbol]])
+	_check(panel.value_text() == "\n".join(expected), "처음 피버 카운터 숫자 = balance.json 초기값")
+	_set_blink(main, true)
+	var none_flash: bool = true
+	for symbol: String in data.fever_symbols:
+		none_flash = none_flash and not panel.is_flashing(symbol)
+	_check(none_flash, "초기 카운터에서는 깜빡이는 줄이 없음 (세븐 초기값 1도 제외)")
+	# 마지막 1회: 초기값 2 이상인 심볼만 깜빡인다. 세븐(초기값 1)은 항상 1이어도 제외.
+	var counts: Dictionary[String, int] = {}
+	for symbol: String in data.fever_symbols:
+		counts[symbol] = 1
+	main._refresh_side_panel(GameState.get_pool(), counts)
+	for symbol: String in data.fever_symbols:
+		var should_blink: bool = data.fever_initial_counts[symbol] >= 2
+		_set_blink(main, true)
+		_check(panel.is_last_one(symbol) == should_blink and panel.is_flashing(symbol) == should_blink, "남은 1회: %s 깜빡임 켜짐 = %s (초기값 %d)" % [symbol, should_blink, data.fever_initial_counts[symbol]])
+		_check((panel.count_color(symbol) == FeverPanel.LAST_ONE_COLOR) == should_blink, "남은 1회: %s 켜짐일 때 글자색 = 강조색 여부 %s" % [symbol, should_blink])
+		_set_blink(main, false)
+		_check(not panel.is_flashing(symbol) and panel.count_color(symbol) == FeverPanel.COUNT_COLOR, "남은 1회: %s 꺼짐일 때 평소 색" % symbol)
+	# 남은 횟수가 2 이상이면 켜짐 때도 깜빡이지 않음
+	for symbol: String in data.fever_symbols:
+		counts[symbol] = maxi(2, data.fever_initial_counts[symbol])
+	main._refresh_side_panel(GameState.get_pool(), counts)
+	_set_blink(main, true)
+	var calm: bool = true
+	for symbol: String in data.fever_symbols:
+		calm = calm and not panel.is_flashing(symbol)
+	_check(calm, "남은 횟수 2 이상이면 깜빡이지 않음")
+	main._refresh_side_panel(GameState.get_pool(), GameState.get_fever_counts())
+
+
+func _test_pool_color(main: Control) -> void:
+	var feel: FeelConfig = main.feel()
+	var yellow: int = int(feel.pool_yellow_from)
+	var red: int = int(feel.pool_red_from)
+	_check(main.pool_tier(yellow - 1) == main.POOL_TIER_NORMAL and main.pool_tier(0) == main.POOL_TIER_NORMAL, "POOL 노랑 기준 미만은 기본(주황) 단계")
+	_check(main.pool_tier(yellow) == main.POOL_TIER_YELLOW and main.pool_tier(red - 1) == main.POOL_TIER_YELLOW, "POOL 노랑 기준 이상·빨강 기준 미만은 노랑 단계")
+	_check(main.pool_tier(red) == main.POOL_TIER_RED and main.pool_tier(red * 10) == main.POOL_TIER_RED, "POOL 빨강 기준 이상은 빨강 단계")
+	var pool_box: InfoBox = _box(main, "PoolBox")
+	var counts: Dictionary[String, int] = GameState.get_fever_counts()
+	main._refresh_side_panel(yellow - 1, counts)
+	_check(pool_box.value_text() == str(yellow - 1) and pool_box.value_color() == main.POOL_COLOR, "POOL 기본 단계: 숫자와 주황")
+	main._refresh_side_panel(yellow, counts)
+	_check(pool_box.value_color() == main.POOL_COLOR_YELLOW, "POOL 노랑 기준 도달: 노랑")
+	_set_blink(main, false)
+	main._refresh_side_panel(red, counts)
+	var off_color: Color = pool_box.value_color()
+	_set_blink(main, true)
+	var on_color: Color = pool_box.value_color()
+	_check(off_color == main.POOL_COLOR_RED_DIM and on_color == main.POOL_COLOR_RED, "POOL 빨강 단계: 깜빡임 꺼짐/켜짐에 따라 색이 바뀜")
+	_set_blink(main, true)
+	main._refresh_side_panel(yellow, counts)
+	_check(pool_box.value_color() == main.POOL_COLOR_YELLOW, "POOL이 빨강 기준 아래로 내려가면 깜빡임 없이 노랑")
+	main._refresh_side_panel(GameState.get_pool(), GameState.get_fever_counts())
+	_check(pool_box.value_text() == str(GameState.get_pool()), "POOL 표시를 원래 값으로 되돌림")
 
 
 func _test_max_and_cancel(main: Control) -> void:
@@ -234,7 +309,7 @@ func _hud_matches(main: Control, overlay: LineOverlay, result: SpinResult) -> bo
 		return false
 	if _box(main, "PoolBox").value_text() != str(result.pool_after):
 		return false
-	var rows: PackedStringArray = _box(main, "FeverBox").value_text().split("\n")
+	var rows: PackedStringArray = _fever(main).value_text().split("\n")
 	for i: int in data.fever_symbols.size():
 		var symbol: String = data.fever_symbols[i]
 		if rows[i] != "%s ×%d" % [data.symbol_names[symbol], result.fever_counts_after[symbol]]:
@@ -318,7 +393,7 @@ func _do_input(main: Control, entry: Dictionary) -> void:
 func _run_spin(main: Control, mode: int, stops: PackedInt32Array) -> void:
 	var credit_text: String = _box(main, "CreditBox").value_text()
 	var pool_text: String = _box(main, "PoolBox").value_text()
-	var fever_text: String = _box(main, "FeverBox").value_text()
+	var fever_text: String = _fever(main).value_text()
 	var plan: Array[Dictionary] = _make_plan(mode)
 	var rects: Array[Rect2] = _window_rects(main)
 	var feel: FeelConfig = main.feel()
@@ -346,7 +421,7 @@ func _run_spin(main: Control, mode: int, stops: PackedInt32Array) -> void:
 			_window_moves += 1
 		if GameState.spinning:
 			if _box(main, "CreditBox").value_text() != credit_text or _box(main, "WinBox").value_text() != "0" \
-					or _box(main, "PoolBox").value_text() != pool_text or _box(main, "FeverBox").value_text() != fever_text:
+					or _box(main, "PoolBox").value_text() != pool_text or _fever(main).value_text() != fever_text:
 				_early_reveal += 1
 			if not lock_checked and time >= LOCK_CHECK_SEC:
 				lock_checked = true

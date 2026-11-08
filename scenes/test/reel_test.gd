@@ -108,6 +108,13 @@ func _test_feel_config() -> void:
 	var good: FeelConfig = FeelConfig.from_dict({"spin_speed": 40, "bounce_cells": 0})
 	_check(good.spin_speed == 40.0 and good.bounce_cells == 0.0, "범위 안 값(정수 포함)은 그대로 읽음")
 	_check(_file_feel.slide_cells + _file_feel.bounce_cells < float(_strip_length), "감속 구간이 스트립 길이보다 짧음")
+	_check(_file_feel.pool_yellow_from == 1000.0 and _file_feel.pool_red_from == 1500.0, "data/feel.json: POOL 색 단계 기준 1,000 / 1,500")
+	var pool_good: FeelConfig = FeelConfig.from_dict({"pool_yellow_from": 2000, "pool_red_from": 3000})
+	_check(pool_good.pool_yellow_from == 2000.0 and pool_good.pool_red_from == 3000.0, "POOL 색 단계 기준을 feel.json 값으로 읽음")
+	var pool_reversed: FeelConfig = FeelConfig.from_dict({"pool_yellow_from": 3000, "pool_red_from": 2000})
+	_check(pool_reversed.pool_yellow_from == 1000.0 and pool_reversed.pool_red_from == 1500.0 and not pool_reversed.errors.is_empty(), "노랑 기준이 빨강 기준 이상이면 둘 다 기본값 + 문제 기록")
+	var pool_negative: FeelConfig = FeelConfig.from_dict({"pool_yellow_from": -5, "pool_red_from": "많이"})
+	_check(pool_negative.pool_yellow_from == 1000.0 and pool_negative.pool_red_from == 1500.0, "음수·숫자 아닌 POOL 기준은 기본값")
 
 
 # ---------------------------------------------------------------- ReelMotion

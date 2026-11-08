@@ -31,7 +31,6 @@ const BET_RECT: Rect2 = Rect2(500, BOTTOM_Y, 136, BOTTOM_H)
 const BIG_FONT_SIZE: int = 24
 const POOL_FONT_SIZE: int = 22
 const NOTICE_FONT_SIZE: int = 11
-const FEVER_FONT_SIZE: int = 14
 const PLACEHOLDER_BG: Color = Color("1A1A22")
 const PLACEHOLDER_BORDER: Color = Color("3A3A48")
 const PLACEHOLDER_TEXT: Color = Color("6A6A7A")
@@ -39,7 +38,16 @@ const PLACEHOLDER_FONT_SIZE: int = 10
 const BACKGROUND_COLOR: Color = Color("0C0C14")
 const CREDIT_COLOR: Color = Color("7CFF9A")
 const WIN_COLOR: Color = Color("FFD700")
+## POOL 숫자 색 3단계: 주황(기본) → 노랑(pool_yellow_from 이상) → 빨강+깜빡임(pool_red_from 이상). 기준 숫자는 feel.json
 const POOL_COLOR: Color = Color("FFB040")
+const POOL_COLOR_YELLOW: Color = Color("FFE94A")
+const POOL_COLOR_RED: Color = Color("FF4040")
+const POOL_COLOR_RED_DIM: Color = Color("8A2222")
+const POOL_TIER_NORMAL: int = 0
+const POOL_TIER_YELLOW: int = 1
+const POOL_TIER_RED: int = 2
+## 깜빡임 한 주기(초). 절반은 켜짐, 절반은 꺼짐. 피버 카운터 마지막 1회 깜빡임과 POOL 빨강 단계가 함께 쓴다.
+const BLINK_PERIOD: float = 0.8
 ## feel.json 수정 시각을 확인하는 간격 (초)
 const FEEL_POLL_SEC: float = 0.5
 ## 한글이 깨지지 않도록 시스템 한글 글꼴을 우선 지정
@@ -71,7 +79,12 @@ var _notice_box: InfoBox
 var _win_box: InfoBox
 var _bet_box: InfoBox
 var _pool_box: InfoBox
-var _fever_box: InfoBox
+var _fever_panel: FeverPanel
+## 깜빡임 시계(초)와 지금 켜짐인지
+var _blink_time: float = 0.0
+var _blink_on: bool = false
+## 지금 화면에 표시 중인 POOL 숫자
+var _pool_shown: int = 0
 var _paytable: PaytablePanel
 var _bet_button: Button
 var _max_bet_button: Button
@@ -149,6 +162,7 @@ func _announce_feel(message: String) -> void:
 
 ## 시간을 delta초 진행한다. 릴 움직임, 자동 정지, 정산 대기를 처리한다. (테스트는 이걸 직접 부른다.)
 func advance(delta: float) -> void:
+	_advance_blink(delta)
 	if _spin.is_active():
 		_spin.advance(delta)
 		for reel: ReelView in _reels:
@@ -201,6 +215,36 @@ func press_stop(index: int) -> bool:
 	var accepted: bool = _spin.press_stop(index)
 	_refresh_buttons()
 	return accepted
+
+
+## 깜빡임 시계를 진행한다. 켜짐/꺼짐이 바뀔 때만 화면을 고친다.
+func _advance_blink(delta: float) -> void:
+	_blink_time = fmod(_blink_time + delta, BLINK_PERIOD)
+	var on: bool = _blink_time >= BLINK_PERIOD / 2.0
+	if on == _blink_on:
+		return
+	_blink_on = on
+	_fever_panel.set_blink(on)
+	_refresh_pool_color()
+
+
+## POOL 숫자의 색 단계 (POOL_TIER_*). 기준 숫자는 지금 스핀이 쓰는 손맛 설정(_feel)에서 읽는다.
+func pool_tier(pool: int) -> int:
+	if float(pool) >= _feel.pool_red_from:
+		return POOL_TIER_RED
+	if float(pool) >= _feel.pool_yellow_from:
+		return POOL_TIER_YELLOW
+	return POOL_TIER_NORMAL
+
+
+func _refresh_pool_color() -> void:
+	match pool_tier(_pool_shown):
+		POOL_TIER_RED:
+			_pool_box.set_value_color(POOL_COLOR_RED if _blink_on else POOL_COLOR_RED_DIM)
+		POOL_TIER_YELLOW:
+			_pool_box.set_value_color(POOL_COLOR_YELLOW)
+		_:
+			_pool_box.set_value_color(POOL_COLOR)
 
 
 ## 릴 index(0~2)의 화면 노드 (테스트용)
@@ -367,13 +411,13 @@ func _refresh_buttons() -> void:
 		_stop_buttons[i].disabled = not _spin.can_stop(i)
 
 
-## 오른쪽 패널: POOL 숫자와 피버 카운터 (연출은 5단계). 스핀 결과의 스냅샷을 받아 정지 후에만 갱신한다.
+## 오른쪽 패널: POOL 숫자(색 단계)와 피버 카운터. 스핀 결과의 스냅샷을 받아 정지 후에만 갱신한다.
+## (피버 발동·풀 획득 연출은 5-B, 5-C)
 func _refresh_side_panel(pool: int, counts: Dictionary[String, int]) -> void:
+	_pool_shown = pool
 	_pool_box.set_value(str(pool))
-	var rows: PackedStringArray = PackedStringArray()
-	for symbol: String in _data.fever_symbols:
-		rows.append("%s ×%d" % [_data.symbol_names.get(symbol, symbol), counts[symbol]])
-	_fever_box.set_value("\n".join(rows))
+	_refresh_pool_color()
+	_fever_panel.set_counts(counts)
 
 
 func _apply_font() -> void:
@@ -462,7 +506,9 @@ func _build_info_boxes() -> void:
 	_bet_box = _add_box(InfoBox.new("BetBox", "BET", BET_RECT, BIG_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
 	_pool_box = _add_box(InfoBox.new("PoolBox", "POOL", POOL_RECT, POOL_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
 	_pool_box.set_value_color(POOL_COLOR)
-	_fever_box = _add_box(InfoBox.new("FeverBox", "피버 카운터", FEVER_RECT, FEVER_FONT_SIZE, HORIZONTAL_ALIGNMENT_LEFT, false, false))
+	_fever_panel = FeverPanel.new("FeverBox", FEVER_RECT)
+	add_child(_fever_panel)
+	_fever_panel.setup(_data)
 	_paytable = PaytablePanel.new("PaytablePanel", PAYTABLE_RECT)
 	add_child(_paytable)
 	_paytable.setup(_data)
