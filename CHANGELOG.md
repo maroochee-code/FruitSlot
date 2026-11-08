@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## 0.3.0 — 2026-11-08 (3단계: 베팅·라인 UI)
+
+### 추가
+- `GameState` 오토로드(`scripts/autoload/game_state.gd`): 크레딧·베팅·WIN 관리. COIN(+100), BET(A→H 배분, 최대에서 1로 순환), START에서 차감, 당첨금 합산, 크레딧 부족 시 BET/START 차단, 스핀 후 베팅 자동 하향
+- `data/economy.json`: COIN 지급량(100)과 시작 크레딧(0)
+- 라인 라벨 A~H + 라인별 베팅 수(베팅 0이면 어둡게), 당첨 라인 선 + 깜빡임, 당첨 칸 흰 테두리 (`scripts/view/line_overlay.gd`)
+- 하단 바 CREDIT / 안내 / WIN / BET, 오른쪽 패널 POOL + 피버 카운터 4줄 (`scripts/view/info_box.gd`)
+- 안내 문구: BET 8 미만이면 "BET 8 이상이면 피버 적립", 당첨 시 "당첨 N = 라인 X + 피버 Y + 풀 Z", 크레딧 부족 안내
+- 키보드 C=COIN, B=BET, 스페이스/엔터=START
+- 심볼 그림 경로를 `symbol_style.gd`의 `ICON_PATHS`에서 관리 (파일이 없으면 색 박스 + 글자)
+- `scenes/test/state_test.tscn`: GameState 규칙 검사 (MAX BET·CANCEL 포함 50개)
+- MAX BET 버튼(M): 베팅을 min(최대 베팅, 현재 크레딧)으로 한 번에 설정. 배분은 BET과 같음
+- CANCEL 버튼(X): 베팅을 0으로. 크레딧 변화 없음. 할 수 없는 상태면 MAX BET·CANCEL 버튼 비활성
+- 배당표(족보) 패널: 오른쪽 패널 피버 카운터 아래, 심볼 7줄(이름 + 색 박스 3개 + ×배수). 숫자는 balance.json에서 읽음 (`scripts/view/paytable_panel.gd`)
+
+### 변경
+- `project.godot`: 오토로드 `GameState` 등록
+- 디버그 창: 기본 꺼짐(F1), 너비 확대(336px) + 줄바꿈으로 오른쪽 끝 잘림 수정
+- 버튼 줄을 CANCEL / COIN / START / BET / MAX BET 5개로 확장
+- `docs/기획서.md` 2·5·13장(버튼 줄, 배당표, MAX BET·CANCEL, 단축키 M·X)과 5·6장: 차감 시점(START), BET 한도·순환, 시작 크레딧 0, 베팅 자동 하향, WIN 총합 명시
+- `view_test`: 크레딧·WIN·BET·POOL·피버·라인 라벨·당첨 선까지 검사하도록 확장
+
 ## 0.2.0 — 2026-11-08 (2단계: 정지 화면)
 
 ### 추가

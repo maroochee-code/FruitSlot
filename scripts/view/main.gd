@@ -1,6 +1,6 @@
 extends Control
-## 2단계 정지 화면. START(또는 스페이스/엔터)로 SlotLogic.spin()을 부르고 결과를 바로 보여준다.
-## 결과는 로직이 정한다. 이 스크립트는 그 값을 표시만 한다.
+## 3단계 메인 화면. COIN/BET/START 입력을 GameState에 전달하고, GameState의 시그널을 받아 화면을 갱신한다.
+## 결과는 로직이 정한다. 이 스크립트는 그 값을 표시만 하며 크레딧·베팅 같은 상태를 직접 바꾸지 않는다.
 
 # --- 화면 배치 (640×480 기준) ---
 const REEL_COLS: int = 3
@@ -8,59 +8,77 @@ const REEL_ROWS: int = 3
 const CELL_SIZE: Vector2 = Vector2(100, 88)
 const CELL_GAP: float = 4.0
 const REEL_ORIGIN: Vector2 = Vector2(76, 60)
-const LABEL_SLOT_SIZE: Vector2 = Vector2(36, 28)
-const LABEL_SLOTS_PER_SIDE: int = 4
-const LABEL_SLOT_STEP: float = 68.0
-const LEFT_LABEL_X: float = 32.0
-const RIGHT_LABEL_X: float = 392.0
 const STOP_SLOT_Y: float = 340.0
 const STOP_SLOT_SIZE: Vector2 = Vector2(100, 28)
 const BUTTON_ROW_Y: float = 376.0
-const BUTTON_SIZE: Vector2 = Vector2(96, 32)
-const START_BUTTON_SIZE: Vector2 = Vector2(120, 32)
-const SIDE_PANEL_RECT: Rect2 = Rect2(468, 8, 168, 404)
+const BUTTON_SIZE: Vector2 = Vector2(76, 32)
+const START_BUTTON_SIZE: Vector2 = Vector2(100, 32)
+const BUTTON_GAP: float = 4.0
+const BUTTON_FONT_SIZE: int = 13
 const TITLE_RECT: Rect2 = Rect2(468, 8, 168, 48)
 const POOL_RECT: Rect2 = Rect2(468, 62, 168, 48)
 const FEVER_RECT: Rect2 = Rect2(468, 116, 168, 140)
+const PAYTABLE_RECT: Rect2 = Rect2(468, 260, 168, 156)
+## 디버그 창은 화면 오른쪽 절반을 덮는다 (글자가 잘리지 않도록 넓게)
+const DEBUG_RECT: Rect2 = Rect2(300, 4, 336, 412)
 const BOTTOM_Y: float = 420.0
 const BOTTOM_H: float = 56.0
-const BOTTOM_SLOTS: Array[Dictionary] = [
-	{ "name": "Credit", "text": "CREDIT", "x": 4.0, "w": 140.0 },
-	{ "name": "Notice", "text": "안내", "x": 148.0, "w": 220.0 },
-	{ "name": "Win", "text": "WIN", "x": 372.0, "w": 124.0 },
-	{ "name": "Bet", "text": "BET", "x": 500.0, "w": 136.0 },
-]
+const CREDIT_RECT: Rect2 = Rect2(4, BOTTOM_Y, 140, BOTTOM_H)
+const NOTICE_RECT: Rect2 = Rect2(148, BOTTOM_Y, 220, BOTTOM_H)
+const WIN_RECT: Rect2 = Rect2(372, BOTTOM_Y, 124, BOTTOM_H)
+const BET_RECT: Rect2 = Rect2(500, BOTTOM_Y, 136, BOTTOM_H)
+const BIG_FONT_SIZE: int = 24
+const POOL_FONT_SIZE: int = 22
+const NOTICE_FONT_SIZE: int = 11
+const FEVER_FONT_SIZE: int = 14
 const PLACEHOLDER_BG: Color = Color("1A1A22")
 const PLACEHOLDER_BORDER: Color = Color("3A3A48")
 const PLACEHOLDER_TEXT: Color = Color("6A6A7A")
 const PLACEHOLDER_FONT_SIZE: int = 10
 const BACKGROUND_COLOR: Color = Color("0C0C14")
+const CREDIT_COLOR: Color = Color("7CFF9A")
+const WIN_COLOR: Color = Color("FFD700")
+const POOL_COLOR: Color = Color("FFB040")
 ## 한글이 깨지지 않도록 시스템 한글 글꼴을 우선 지정
 const FONT_NAMES: PackedStringArray = ["Malgun Gothic", "맑은 고딕", "Noto Sans CJK KR", "Apple SD Gothic Neo", "sans-serif"]
 
-var _logic: SlotLogic
 var _data: BalanceData
 var _cells: Array[Array] = []
+var _overlay: LineOverlay
 var _debug: DebugPanel
-var _debug_visible: bool = true
+var _debug_visible: bool = false
 var _last_result: SpinResult
-## 2단계는 베팅 UI가 없어 풀베팅 값을 balance.json에서 읽어 쓴다.
-var _test_bet: int = 0
+## 거절·당첨 같은 일회성 안내. 비어 있으면 상태에 맞는 기본 안내를 보여준다.
+var _notice_override: String = ""
+var _credit_box: InfoBox
+var _notice_box: InfoBox
+var _win_box: InfoBox
+var _bet_box: InfoBox
+var _pool_box: InfoBox
+var _fever_box: InfoBox
+var _paytable: PaytablePanel
+var _bet_button: Button
+var _max_bet_button: Button
+var _cancel_button: Button
+var _start_button: Button
 
 
 func _ready() -> void:
 	_apply_font()
-	_data = BalanceData.load_from_file()
-	if _data == null:
-		push_error("main: balance.json 로드 실패")
+	if not GameState.ready_ok:
+		push_error("main: GameState 초기화 실패")
 		return
-	_test_bet = _data.fever_min_total_bet
-	_logic = SlotLogic.new(_data, int(Time.get_ticks_usec()))
+	_data = GameState.get_balance()
 	_build_background()
 	_build_reels()
+	_build_overlay()
 	_build_placeholders()
+	_build_info_boxes()
 	_build_buttons()
 	_build_debug()
+	_connect_state()
+	GameState.refresh()
+	_refresh_side_panel()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -68,21 +86,23 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if key == null or not key.pressed or key.echo:
 		return
 	match key.keycode:
+		KEY_C:
+			GameState.insert_coin()
+		KEY_B:
+			GameState.raise_bet()
+		KEY_M:
+			GameState.max_bet()
+		KEY_X:
+			GameState.cancel_bet()
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
 			do_spin()
 		KEY_F1:
 			toggle_debug()
 
 
-## 스핀 1회를 실행하고 결과를 표시한다. 테스트에서도 부른다.
+## START. 크레딧 차감과 스핀은 GameState가 하고, 결과는 시그널(_on_spin_finished)로 받아 표시한다.
 func do_spin() -> SpinResult:
-	var result: SpinResult = _logic.spin(_test_bet)
-	if result == null:
-		return null
-	_last_result = result
-	_show_grid(result.grid)
-	_debug.show_result(result, _data, grid_matches_logic())
-	return result
+	return GameState.start_spin()
 
 
 ## 화면 칸에 실제로 표시된 심볼이 마지막 로직 결과와 같은지 비교한다.
@@ -100,6 +120,99 @@ func grid_matches_logic() -> bool:
 func toggle_debug() -> void:
 	_debug_visible = not _debug_visible
 	_debug.visible = _debug_visible
+
+
+func _connect_state() -> void:
+	GameState.credit_changed.connect(_on_credit_changed)
+	GameState.bet_changed.connect(_on_bet_changed)
+	GameState.win_changed.connect(_on_win_changed)
+	GameState.coin_inserted.connect(_on_coin_inserted)
+	GameState.action_rejected.connect(_on_action_rejected)
+	GameState.spin_finished.connect(_on_spin_finished)
+
+
+func _on_credit_changed(credit: int) -> void:
+	_credit_box.set_value(str(credit))
+	_refresh_buttons()
+	_refresh_notice()
+
+
+func _on_bet_changed(total_bet: int, line_bets: PackedInt32Array) -> void:
+	_bet_box.set_value(str(total_bet))
+	_overlay.update_bets(line_bets)
+	_overlay.clear_wins()
+	_notice_override = ""
+	_refresh_buttons()
+	_refresh_notice()
+
+
+func _on_win_changed(win: int) -> void:
+	_win_box.set_value(str(win))
+
+
+func _on_coin_inserted(_amount: int) -> void:
+	_notice_override = ""
+
+
+func _on_action_rejected(reason: StringName) -> void:
+	if reason == GameState.REASON_NO_CREDIT:
+		_notice_override = "크레딧이 없습니다. COIN(C)을 누르세요."
+	elif reason == GameState.REASON_NO_BET:
+		_notice_override = "BET(B)을 눌러 베팅하세요."
+	elif reason == GameState.REASON_BET_OVER_CREDIT:
+		_notice_override = "크레딧이 부족해 BET을 더 올릴 수 없습니다."
+	_refresh_notice()
+
+
+func _on_spin_finished(result: SpinResult, lowered_from: int) -> void:
+	_last_result = result
+	_show_grid(result.grid)
+	_overlay.show_wins(result.line_wins)
+	_refresh_side_panel()
+	_notice_override = _build_result_notice(result, lowered_from)
+	_debug.show_result(result, _data, grid_matches_logic(), GameState.credit)
+	_refresh_buttons()
+	_refresh_notice()
+
+
+func _build_result_notice(result: SpinResult, lowered_from: int) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	if result.total_payout() > 0:
+		parts.append("당첨 %d = 라인 %d + 피버 %d + 풀 %d" % [result.total_payout(), result.line_payout, result.fever_bonus, result.pool_won])
+	if lowered_from > 0:
+		parts.append("크레딧이 부족해 BET을 %d → %d로 낮췄습니다." % [lowered_from, GameState.bet])
+	return "\n".join(parts)
+
+
+## 안내 문구: (일회성 안내 또는 상태 안내) + BET 8 미만이면 피버 안내
+func _refresh_notice() -> void:
+	var lines: PackedStringArray = PackedStringArray()
+	if not _notice_override.is_empty():
+		lines.append(_notice_override)
+	elif GameState.credit < 1:
+		lines.append("COIN(C)으로 크레딧을 넣으세요.")
+	elif GameState.bet < 1:
+		lines.append("BET(B)으로 베팅하세요.")
+	if GameState.bet < _data.fever_min_total_bet:
+		lines.append("BET %d 이상이면 피버 적립" % _data.fever_min_total_bet)
+	_notice_box.set_value("\n".join(lines))
+
+
+func _refresh_buttons() -> void:
+	_bet_button.disabled = not GameState.can_raise_bet()
+	_max_bet_button.disabled = not GameState.can_max_bet()
+	_cancel_button.disabled = not GameState.can_cancel_bet()
+	_start_button.disabled = not GameState.can_start()
+
+
+## 오른쪽 패널: POOL 숫자와 피버 카운터 (연출은 5단계)
+func _refresh_side_panel() -> void:
+	_pool_box.set_value(str(GameState.get_pool()))
+	var counts: Dictionary[String, int] = GameState.get_fever_counts()
+	var rows: PackedStringArray = PackedStringArray()
+	for symbol: String in _data.fever_symbols:
+		rows.append("%s ×%d" % [_data.symbol_names.get(symbol, symbol), counts[symbol]])
+	_fever_box.set_value("\n".join(rows))
 
 
 func _show_grid(grid: Array[PackedStringArray]) -> void:
@@ -141,20 +254,19 @@ func _build_reels() -> void:
 		_cells.append(column)
 
 
-## 3단계 이후에 채울 자리들을 빈 칸으로 미리 잡아 둔다.
+func _build_overlay() -> void:
+	_overlay = LineOverlay.new()
+	_overlay.name = "LineOverlay"
+	add_child(_overlay)
+	_overlay.setup(_data, _cells, REEL_ORIGIN, CELL_SIZE, CELL_GAP)
+
+
+## 아직 기능이 없는 자리(STOP 버튼은 4단계, 타이틀은 6단계)
 func _build_placeholders() -> void:
-	for i: int in LABEL_SLOTS_PER_SIDE:
-		var y: float = REEL_ORIGIN.y + i * LABEL_SLOT_STEP
-		_add_placeholder("LineLabelL%d" % i, "", Rect2(Vector2(LEFT_LABEL_X, y), LABEL_SLOT_SIZE))
-		_add_placeholder("LineLabelR%d" % i, "", Rect2(Vector2(RIGHT_LABEL_X, y), LABEL_SLOT_SIZE))
 	for col: int in REEL_COLS:
 		var x: float = REEL_ORIGIN.x + col * (CELL_SIZE.x + CELL_GAP)
 		_add_placeholder("StopSlot%d" % (col + 1), "STOP %d" % (col + 1), Rect2(Vector2(x, STOP_SLOT_Y), STOP_SLOT_SIZE))
 	_add_placeholder("Title", "타이틀", TITLE_RECT)
-	_add_placeholder("Pool", "POOL", POOL_RECT)
-	_add_placeholder("FeverCounter", "피버 카운터", FEVER_RECT)
-	for slot: Dictionary in BOTTOM_SLOTS:
-		_add_placeholder(slot["name"], slot["text"], Rect2(slot["x"], BOTTOM_Y, slot["w"], BOTTOM_H))
 
 
 func _add_placeholder(node_name: String, text: String, rect: Rect2) -> void:
@@ -175,17 +287,46 @@ func _add_placeholder(node_name: String, text: String, rect: Rect2) -> void:
 	add_child(panel)
 
 
+func _build_info_boxes() -> void:
+	_credit_box = _add_box(InfoBox.new("CreditBox", "CREDIT", CREDIT_RECT, BIG_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
+	_credit_box.set_value_color(CREDIT_COLOR)
+	_notice_box = _add_box(InfoBox.new("NoticeBox", "", NOTICE_RECT, NOTICE_FONT_SIZE, HORIZONTAL_ALIGNMENT_LEFT, true, false))
+	_win_box = _add_box(InfoBox.new("WinBox", "WIN", WIN_RECT, BIG_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
+	_win_box.set_value_color(WIN_COLOR)
+	_bet_box = _add_box(InfoBox.new("BetBox", "BET", BET_RECT, BIG_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
+	_pool_box = _add_box(InfoBox.new("PoolBox", "POOL", POOL_RECT, POOL_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
+	_pool_box.set_value_color(POOL_COLOR)
+	_fever_box = _add_box(InfoBox.new("FeverBox", "피버 카운터", FEVER_RECT, FEVER_FONT_SIZE, HORIZONTAL_ALIGNMENT_LEFT, false, false))
+	_paytable = PaytablePanel.new("PaytablePanel", PAYTABLE_RECT)
+	add_child(_paytable)
+	_paytable.setup(_data)
+
+
+func _add_box(box: InfoBox) -> InfoBox:
+	add_child(box)
+	return box
+
+
+## 버튼 한 줄: CANCEL | COIN | START | BET | MAX BET (릴 가운데 기준으로 가운데 정렬)
 func _build_buttons() -> void:
 	var reels_width: float = REEL_COLS * CELL_SIZE.x + (REEL_COLS - 1) * CELL_GAP
 	var center_x: float = REEL_ORIGIN.x + reels_width / 2.0
-	var start_x: float = center_x - START_BUTTON_SIZE.x / 2.0
-	var start: Button = _make_button("StartButton", "START", Rect2(Vector2(start_x, BUTTON_ROW_Y), START_BUTTON_SIZE))
-	start.pressed.connect(do_spin)
-	var coin: Button = _make_button("CoinButton", "COIN", Rect2(Vector2(start_x - BUTTON_SIZE.x - CELL_GAP, BUTTON_ROW_Y), BUTTON_SIZE))
-	var bet: Button = _make_button("BetButton", "BET", Rect2(Vector2(start_x + START_BUTTON_SIZE.x + CELL_GAP, BUTTON_ROW_Y), BUTTON_SIZE))
-	# COIN/BET은 3단계에서 연결한다.
-	coin.disabled = true
-	bet.disabled = true
+	var row_width: float = BUTTON_SIZE.x * 4.0 + START_BUTTON_SIZE.x + BUTTON_GAP * 4.0
+	var x: float = center_x - row_width / 2.0
+	_cancel_button = _make_button("CancelButton", "CANCEL", Rect2(Vector2(x, BUTTON_ROW_Y), BUTTON_SIZE))
+	_cancel_button.pressed.connect(GameState.cancel_bet)
+	x += BUTTON_SIZE.x + BUTTON_GAP
+	var coin: Button = _make_button("CoinButton", "COIN", Rect2(Vector2(x, BUTTON_ROW_Y), BUTTON_SIZE))
+	coin.pressed.connect(GameState.insert_coin)
+	x += BUTTON_SIZE.x + BUTTON_GAP
+	_start_button = _make_button("StartButton", "START", Rect2(Vector2(x, BUTTON_ROW_Y), START_BUTTON_SIZE))
+	_start_button.pressed.connect(do_spin)
+	x += START_BUTTON_SIZE.x + BUTTON_GAP
+	_bet_button = _make_button("BetButton", "BET", Rect2(Vector2(x, BUTTON_ROW_Y), BUTTON_SIZE))
+	_bet_button.pressed.connect(GameState.raise_bet)
+	x += BUTTON_SIZE.x + BUTTON_GAP
+	_max_bet_button = _make_button("MaxBetButton", "MAX BET", Rect2(Vector2(x, BUTTON_ROW_Y), BUTTON_SIZE))
+	_max_bet_button.pressed.connect(GameState.max_bet)
 
 
 func _make_button(node_name: String, text: String, rect: Rect2) -> Button:
@@ -196,6 +337,7 @@ func _make_button(node_name: String, text: String, rect: Rect2) -> Button:
 	button.size = rect.size
 	# 스페이스·엔터가 버튼 클릭으로 한 번 더 처리되지 않게 한다.
 	button.focus_mode = Control.FOCUS_NONE
+	button.add_theme_font_size_override("font_size", BUTTON_FONT_SIZE)
 	add_child(button)
 	return button
 
@@ -203,7 +345,8 @@ func _make_button(node_name: String, text: String, rect: Rect2) -> Button:
 func _build_debug() -> void:
 	_debug = DebugPanel.new()
 	_debug.name = "DebugPanel"
-	_debug.position = SIDE_PANEL_RECT.position
-	_debug.size = SIDE_PANEL_RECT.size
+	_debug.position = DEBUG_RECT.position
+	_debug.size = DEBUG_RECT.size
 	_debug.clip_contents = true
+	_debug.visible = _debug_visible
 	add_child(_debug)

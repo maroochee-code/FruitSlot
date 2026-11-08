@@ -1,9 +1,9 @@
 class_name DebugPanel
 extends PanelContainer
-## 로직 결과를 글자로 보여주는 디버그 창. F1로 켜고 끈다.
+## 로직 결과를 글자로 보여주는 디버그 창. F1로 켜고 끈다. (기본 꺼짐)
 
 const FONT_SIZE: int = 10
-const BG_COLOR: Color = Color(0, 0, 0, 0.82)
+const BG_COLOR: Color = Color(0, 0, 0, 0.88)
 const TEXT_COLOR: Color = Color("C8FFC8")
 
 var _label: Label = Label.new()
@@ -15,31 +15,30 @@ func _init() -> void:
 	add_theme_stylebox_override("panel", box)
 	_label.add_theme_font_size_override("font_size", FONT_SIZE)
 	_label.add_theme_color_override("font_color", TEXT_COLOR)
-	_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	# 오른쪽 끝에서 잘리지 않도록 줄바꿈을 켠다.
+	_label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	add_child(_label)
-	_label.text = "[디버그] START 또는 스페이스로 스핀\nF1: 이 창 켜기/끄기"
+	_label.text = "[디버그] F1: 이 창 켜기/끄기\nC=COIN B=BET 스페이스/엔터=START"
 
 
-func show_result(result: SpinResult, data: BalanceData, grid_matches: bool) -> void:
+func show_result(result: SpinResult, data: BalanceData, grid_matches: bool, credit_after: int) -> void:
 	var rows: PackedStringArray = PackedStringArray()
-	rows.append("== 스핀 결과 (BET %d) ==" % result.total_bet)
+	rows.append("== 스핀 결과 (BET %d) / 크레딧 %d ==" % [result.total_bet, credit_after])
+	rows.append("라인별 베팅: %s" % _join_ints(result.line_bets))
 	rows.append("정지 위치: %s" % _join_ints(result.stops))
 	rows.append("화면=로직: %s" % ("일치 OK" if grid_matches else "불일치!! 확인 필요"))
-	rows.append("격자(릴별 위→아래)")
 	for col: int in result.grid.size():
-		rows.append("  릴%d: %s" % [col + 1, " / ".join(result.grid[col])])
+		rows.append("릴%d(위→아래): %s" % [col + 1, " / ".join(result.grid[col])])
 	rows.append("-- 당첨 라인 %d개 --" % result.line_wins.size())
 	for win: LineWin in result.line_wins:
-		rows.append("  %s(%s) %s %d×%d=%d" % [win.line_id, win.line_type, win.symbol, win.line_bet, win.multiplier, win.payout])
-	rows.append("라인 합계: %d" % result.line_payout)
-	rows.append("피버 적중: %s" % _join_strings(result.fever_hits))
-	rows.append("피버 발동: %s (+%d)" % [_join_strings(result.fever_triggers), result.fever_bonus])
-	rows.append("풀 지급: %d" % result.pool_won)
-	rows.append("총 당첨금: %d" % result.total_payout())
-	rows.append("-- 스핀 후 상태 --")
+		rows.append("%s %s %d×%d=%d" % [win.line_id, win.symbol, win.line_bet, win.multiplier, win.payout])
+	rows.append("라인 %d + 피버 %d + 풀 %d = %d" % [result.line_payout, result.fever_bonus, result.pool_won, result.total_payout()])
+	rows.append("피버 적중: %s / 발동: %s" % [_join_strings(result.fever_hits), _join_strings(result.fever_triggers)])
+	var counts: PackedStringArray = PackedStringArray()
 	for symbol: String in data.fever_symbols:
-		rows.append("  피버 %s 남음 %d" % [symbol, result.fever_counts_after.get(symbol, -1)])
-	rows.append("  POOL %d" % result.pool_after)
+		counts.append("%s %d" % [symbol, result.fever_counts_after.get(symbol, -1)])
+	rows.append("피버 남음: %s" % ", ".join(counts))
+	rows.append("POOL %d" % result.pool_after)
 	_label.text = "\n".join(rows)
 
 

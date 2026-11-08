@@ -1,0 +1,5 @@
+{
+	"_comment": "크레딧 관련 수치. COIN 1회 지급량과 시작 크레딧. 로직(balance.json)과 분리해 둔다.",
+	"coin_amount": 100,
+	"start_credit": 0
+}
