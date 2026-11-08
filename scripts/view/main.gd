@@ -5,7 +5,7 @@ extends Control
 # --- 화면 배치 (640×480 기준) ---
 const REEL_COLS: int = 3
 const REEL_ROWS: int = 3
-## 칸 높이 78: 회전 중 위아래로 반 칸씩 더 보여도 STOP 자리(y=340)를 덮지 않는 값
+## 칸 높이 78 (4단계 값 그대로 유지). 릴은 y 55 ~ 301로 STOP 자리(y=340) 위에서 끝난다.
 const CELL_SIZE: Vector2 = Vector2(100, 78)
 const CELL_GAP: float = 4.0
 const REEL_ORIGIN: Vector2 = Vector2(76, 55)
@@ -37,8 +37,6 @@ const PLACEHOLDER_BORDER: Color = Color("3A3A48")
 const PLACEHOLDER_TEXT: Color = Color("6A6A7A")
 const PLACEHOLDER_FONT_SIZE: int = 10
 const BACKGROUND_COLOR: Color = Color("0C0C14")
-## 회전 중 창 위아래 덤 부분을 가리는 어두운 막
-const REEL_SHADE_COLOR: Color = Color(0.047, 0.047, 0.078, 0.55)
 const CREDIT_COLOR: Color = Color("7CFF9A")
 const WIN_COLOR: Color = Color("FFD700")
 const POOL_COLOR: Color = Color("FFB040")
@@ -210,6 +208,11 @@ func reel_view(index: int) -> ReelView:
 	return _reels[index]
 
 
+## 스핀 진행 관리자 (테스트용: 릴이 출발했는지 등을 본다)
+func spin_controller() -> SpinController:
+	return _spin
+
+
 ## 지금 스핀이 쓰는 손맛 설정
 func feel() -> FeelConfig:
 	return _feel
@@ -245,6 +248,7 @@ func _connect_state() -> void:
 	GameState.action_rejected.connect(_on_action_rejected)
 	GameState.spin_started.connect(_on_spin_started)
 	GameState.spin_finished.connect(_on_spin_finished)
+	_spin.reel_started.connect(_on_reel_started)
 	_spin.reel_stopped.connect(_on_reel_stopped)
 	_spin.all_stopped.connect(_on_all_stopped)
 
@@ -290,16 +294,18 @@ func _on_spin_started(result: SpinResult) -> void:
 	_settling = false
 	# 새 손맛 설정은 여기서만 받아들인다. 이 스핀은 끝까지 이 설정 한 벌로 움직인다.
 	_feel = _latest_feel
-	for reel: ReelView in _reels:
-		reel.set_spinning_look(true)
 	_spin.begin(result.stops, _feel)
 	_refresh_buttons()
 	_refresh_notice()
 
 
+## 릴이 출발하면 그 릴의 STOP 버튼이 켜진다 (출발 지연 중에는 꺼져 있음)
+func _on_reel_started(_index: int) -> void:
+	_refresh_buttons()
+
+
 func _on_reel_stopped(index: int) -> void:
 	_reels[index].refresh()
-	_reels[index].set_spinning_look(false)
 	_refresh_buttons()
 
 
@@ -390,16 +396,15 @@ func _build_reels() -> void:
 	var holder: Control = Control.new()
 	holder.name = "Reels"
 	add_child(holder)
-	var extension: float = CELL_SIZE.y * _feel.half_row
 	var motions: Array[ReelMotion] = []
 	for col: int in REEL_COLS:
 		var strip: PackedStringArray = _data.reels[col]
 		var motion: ReelMotion = ReelMotion.new(strip.size(), _feel)
 		var reel: ReelView = ReelView.new()
 		reel.name = "Reel%d" % (col + 1)
-		reel.position = REEL_ORIGIN + Vector2(col * (CELL_SIZE.x + CELL_GAP), -extension)
+		reel.position = REEL_ORIGIN + Vector2(col * (CELL_SIZE.x + CELL_GAP), 0.0)
 		holder.add_child(reel)
-		reel.setup(strip, motion, CELL_SIZE, CELL_GAP, REEL_ROWS, extension, REEL_SHADE_COLOR)
+		reel.setup(strip, motion, CELL_SIZE, CELL_GAP, REEL_ROWS)
 		var column: Array = []
 		for row: int in REEL_ROWS:
 			column.append(reel.cell_at(row))

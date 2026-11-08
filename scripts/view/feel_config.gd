@@ -12,13 +12,20 @@ const SPECS: Dictionary = {
 	"slide_ease_power": [3.0, 1.0, 8.0],
 	"bounce_cells": [0.15, 0.0, 1.0],
 	"bounce_time": [0.14, 0.0, 2.0],
-	"half_row": [0.5, 0.0, 0.5],
 	"auto_stop_start": [3.0, 0.0, 60.0],
 	"auto_stop_interval": [0.4, 0.0, 10.0],
 	"quick_stop_interval": [0.15, 0.0, 5.0],
 	"start_lock_sec": [0.3, 0.0, 5.0],
 	"result_delay": [0.25, 0.0, 5.0],
 }
+## 릴 수만큼 값이 들어가는 항목. 키: [기본값 목록, 최솟값, 최댓값]
+const REEL_COUNT: int = 3
+const ARRAY_SPECS: Dictionary = {
+	"reel_start_delay": [[0.0, 0.08, 0.16], 0.0, 0.5],
+	"reel_speed_scale": [[1.0, 0.95, 1.05], 0.5, 1.5],
+}
+## 출발 지연이 자동 정지 시각보다 크면 안전하게 쓸 값 (지연 없음)
+const NO_DELAY: Array[float] = [0.0, 0.0, 0.0]
 
 ## 회전 속도 (칸/초)
 var spin_speed: float = 26.0
@@ -32,8 +39,10 @@ var slide_ease_power: float = 3.0
 var bounce_cells: float = 0.15
 ## 튕겨 돌아오는 시간 (초)
 var bounce_time: float = 0.14
-## 릴 창 위아래로 더 보이는 높이 (칸 높이 대비, 최대 0.5)
-var half_row: float = 0.5
+## 릴별 출발 지연 (START 기준, 초). 릴1~3 순서
+var reel_start_delay: PackedFloat64Array = PackedFloat64Array([0.0, 0.08, 0.16])
+## 릴별 회전 속도 배율 (spin_speed에 곱함). 릴1~3 순서
+var reel_speed_scale: PackedFloat64Array = PackedFloat64Array([1.0, 0.95, 1.05])
 ## 자동 정지: 첫 릴이 멈추기 시작하는 시각 (START 기준, 초)
 var auto_stop_start: float = 3.0
 ## 자동 정지: 릴 사이 간격 (초)
@@ -86,3 +95,44 @@ func _read(raw: Dictionary) -> void:
 			else:
 				errors.append("%s 값 %s 이(가) 범위(%s~%s)를 벗어나 기본값 %s 사용" % [key, raw_value, spec[1], spec[2], value])
 		set(key, value)
+	for key: String in ARRAY_SPECS:
+		set(key, _read_array(raw, key))
+	_check_delay_before_auto_stop()
+
+
+## 릴 수만큼의 숫자 목록을 읽는다. 개수가 다르거나 하나라도 범위 밖이면 목록 전체를 기본값으로 쓴다.
+func _read_array(raw: Dictionary, key: String) -> PackedFloat64Array:
+	var spec: Array = ARRAY_SPECS[key]
+	var fallback: PackedFloat64Array = PackedFloat64Array(spec[0])
+	if not raw.has(key):
+		errors.append("%s 항목이 없어 기본값 %s 사용" % [key, fallback])
+		return fallback
+	var raw_value: Variant = raw[key]
+	if typeof(raw_value) != TYPE_ARRAY or (raw_value as Array).size() != REEL_COUNT:
+		errors.append("%s 은(는) 릴 %d개 분량의 숫자 목록이어야 해서 기본값 %s 사용" % [key, REEL_COUNT, fallback])
+		return fallback
+	var values: PackedFloat64Array = PackedFloat64Array()
+	for item: Variant in raw_value:
+		var is_number: bool = typeof(item) == TYPE_FLOAT or typeof(item) == TYPE_INT
+		if not is_number or float(item) < float(spec[1]) or float(item) > float(spec[2]):
+			errors.append("%s 값 %s 이(가) 범위(%s~%s)를 벗어나 기본값 %s 사용" % [key, raw_value, spec[1], spec[2], fallback])
+			return fallback
+		values.append(float(item))
+	return values
+
+
+## 출발 지연이 첫 자동 정지 시각 이상이면 "출발도 전에 정지"가 되므로 지연을 기본값(그래도 안 되면 0)으로 돌린다.
+func _check_delay_before_auto_stop() -> void:
+	if _longest_delay() < auto_stop_start:
+		return
+	errors.append("reel_start_delay 가 auto_stop_start(%s)보다 같거나 커서 기본값 사용" % auto_stop_start)
+	reel_start_delay = PackedFloat64Array(ARRAY_SPECS["reel_start_delay"][0])
+	if _longest_delay() >= auto_stop_start:
+		reel_start_delay = PackedFloat64Array(NO_DELAY)
+
+
+func _longest_delay() -> float:
+	var longest: float = 0.0
+	for delay: float in reel_start_delay:
+		longest = maxf(longest, delay)
+	return longest

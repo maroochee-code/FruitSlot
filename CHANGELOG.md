@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## 0.4.1 — 2026-11-09 (5단계 선행 과제: 릴 연출 방식 변경)
+
+### 추가
+- 릴별 출발 시간차·속도차를 `data/feel.json`으로 분리: `reel_start_delay`(릴1~3, 기본 [0, 0.08, 0.16]초), `reel_speed_scale`(릴1~3, 기본 [1.0, 0.95, 1.05]). 다음 스핀부터 적용, 진행 중 스핀은 불변 (`FeelConfig.ARRAY_SPECS`)
+- `SpinController`: 출발 지연 처리, `reel_started` 신호, `has_started()`. 출발 전 릴은 STOP 불가, 회전 중 START는 출발 전 릴도 예약해 출발 직후 정지. 자동 정지 시각은 계속 START 기준
+- `ReelMotion.start(target, feel, speed_scale)`: 릴별 속도 배율. `current_speed()`
+- `ReelView.windows_are_sound()`, `window_at()`, `main.spin_controller()` (테스트용)
+
+### 변경
+- **칸 단위 클리핑 창**: 9칸의 테두리는 고정, 각 칸은 자기 칸 모양으로 잘라 보여 주고 그 안에서 심볼 두 개가 반쪽씩 걸쳐 스크롤. 심볼이 칸 밖으로 나가거나 이웃과 겹치지 않음. 위아래 반 칸 덤 영역과 어두운 가림막 제거 (`reel_view.gd`, `main.gd`)
+- 칸 테두리(고정, 2px)를 창 위에 덧그림 (`ReelView.WINDOW_FRAME_*`)
+- `docs/기획서.md` 릴 영역 문구, `docs/feel.md` 갱신
+- 결과 확정 로직(`scripts/logic/`, `balance.json`)은 변경 없음
+
+### 삭제
+- `feel.json`의 `half_row` (칸 단위 창에서는 필요 없음)
+
+### 수정
+- (개발 중 발견) 출발 지연 중인 릴의 STOP 버튼이 출발해도 켜지지 않던 문제: `reel_started` 신호로 버튼 갱신
+
 ## 0.4.0 — 2026-11-09 (4단계: 릴 회전과 STOP)
 
 ### 추가

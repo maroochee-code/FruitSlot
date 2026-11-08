@@ -1,0 +1,15 @@
+{
+	"spin_speed": 60.0,
+	"accel_time": 0.25,
+	"slide_cells": 3.0,
+	"slide_ease_power": 3.0,
+	"bounce_cells": 0.15,
+	"bounce_time": 0.14,
+	"reel_start_delay": [0.0, 0.08, 0.16],
+	"reel_speed_scale": [1.0, 0.95, 1.05],
+	"auto_stop_start": 3.0,
+	"auto_stop_interval": 0.4,
+	"quick_stop_interval": 0.15,
+	"start_lock_sec": 0.3,
+	"result_delay": 0.25
+}

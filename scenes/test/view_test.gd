@@ -24,6 +24,9 @@ var _early_reveal: int = 0
 var _lock_errors: int = 0
 var _final_errors: int = 0
 var _stuck_spins: int = 0
+var _window_errors: int = 0
+var _window_moves: int = 0
+var _delay_errors: int = 0
 
 
 func _ready() -> void:
@@ -95,14 +98,20 @@ func _test_layout(main: Control) -> void:
 	for i: int in 3:
 		var reel: ReelView = main.reel_view(i)
 		fits = fits and reel.position.y >= 0.0 and reel.position.y + reel.size.y <= stop_y
-	_check(fits, "릴 창(위아래 반 칸 포함)이 화면 안, STOP 버튼 위에서 끝남")
-	var feel: FeelConfig = main.feel()
-	var extension: float = main.CELL_SIZE.y * feel.half_row
+	_check(fits, "릴(3칸)이 화면 안, STOP 버튼 위에서 끝남")
 	var window: float = 3.0 * main.CELL_SIZE.y + 2.0 * main.CELL_GAP
-	_check(is_equal_approx(main.reel_view(0).size.y, window + 2.0 * extension), "릴 창 높이 = 3칸 + 위아래 덤")
-	_check(not (main.get_node("Reels/Reel1/TopShade") as ColorRect).visible, "멈춰 있을 땐 덤 가림막이 꺼짐")
+	_check(is_equal_approx(main.reel_view(0).size.y, window), "릴 높이 = 3칸 + 칸 사이 간격 (위아래 덤 영역 없음)")
+	_check(not main.reel_view(0).has_node("TopShade") and not main.reel_view(0).has_node("BottomShade"), "덤 가림막이 없음")
+	var windows_ok: bool = true
+	for i: int in 3:
+		for row: int in 3:
+			var cell_window: Control = main.reel_view(i).window_at(row)
+			windows_ok = windows_ok and cell_window.clip_contents and cell_window.size == main.CELL_SIZE \
+					and is_equal_approx(cell_window.position.y, row * (main.CELL_SIZE.y + main.CELL_GAP))
+	_check(windows_ok, "릴 3개 × 칸 창 3개가 칸 크기·간격대로 놓이고 모두 잘라서(clip) 보여 줌")
 	for i: int in 3:
 		_check(main.reel_view(i).is_consistent(), "처음 화면 릴%d의 심볼이 스트립 순서와 같음" % (i + 1))
+		_check(main.reel_view(i).windows_are_sound(), "처음 화면 릴%d의 칸 창이 심볼로 빈틈없이 채워짐" % (i + 1))
 
 
 func _test_paytable(main: Control) -> void:
@@ -178,7 +187,7 @@ func _test_spins(main: Control) -> void:
 		if result == null:
 			mismatches += 1
 			continue
-		_run_spin(main, i % INPUT_MODES)
+		_run_spin(main, i % INPUT_MODES, result.stops)
 		if not main.grid_matches_logic():
 			mismatches += 1
 			continue
@@ -193,6 +202,9 @@ func _test_spins(main: Control) -> void:
 	_check(wins_seen > 0, "당첨 사례가 한 번 이상 나옴")
 	_check(_final_errors == 0, "릴 정지 위치 == 로직 stops (어긋난 횟수 %d)" % _final_errors)
 	_check(_strip_errors == 0, "회전 중 모든 프레임에서 보이는 심볼이 실제 릴 스트립 순서와 같음 (어긋난 프레임 %d)" % _strip_errors)
+	_check(_window_errors == 0, "회전 중 모든 프레임에서 칸 창이 두 심볼로 빈틈없이 채워지고 잘라서 보여 줌 (어긋난 프레임 %d)" % _window_errors)
+	_check(_window_moves == 0, "회전 중에도 9칸 창(테두리)의 위치·크기가 고정 (움직인 프레임 %d)" % _window_moves)
+	_check(_delay_errors == 0, "릴별 출발 지연: 지연 전에는 정지 상태·STOP 불가, 지연 후 출발 (어긋난 프레임 %d)" % _delay_errors)
 	_check(_early_reveal == 0, "정산 전에는 CREDIT·WIN·POOL·피버가 먼저 바뀌지 않음 (어긋난 프레임 %d)" % _early_reveal)
 	_check(_lock_errors == 0, "회전 중 COIN·BET·MAX BET·CANCEL 잠금, STOP 버튼 상태 (어긋난 횟수 %d)" % _lock_errors)
 	_check(_stuck_spins == 0, "모든 스핀이 제한 시간 안에 끝남 (%d)" % _stuck_spins)
@@ -303,14 +315,14 @@ func _do_input(main: Control, entry: Dictionary) -> void:
 
 ## 이미 START된 스핀 하나를 끝까지 굴린다. 매 프레임 검사:
 ## 보이는 심볼이 실제 스트립과 같은가, 정산 전에 숫자가 먼저 바뀌지 않았는가, 회전 중 잠금이 지켜지는가.
-func _run_spin(main: Control, mode: int) -> void:
+func _run_spin(main: Control, mode: int, stops: PackedInt32Array) -> void:
 	var credit_text: String = _box(main, "CreditBox").value_text()
 	var pool_text: String = _box(main, "PoolBox").value_text()
 	var fever_text: String = _box(main, "FeverBox").value_text()
 	var plan: Array[Dictionary] = _make_plan(mode)
-	var stops: PackedInt32Array = PackedInt32Array()
-	for i: int in 3:
-		stops.append(main.reel_view(i).motion.target)
+	var rects: Array[Rect2] = _window_rects(main)
+	var feel: FeelConfig = main.feel()
+	var spin: SpinController = main.spin_controller()
 	var time: float = 0.0
 	var lock_checked: bool = false
 	while GameState.spinning and time < MAX_SPIN_SEC:
@@ -323,6 +335,15 @@ func _run_spin(main: Control, mode: int) -> void:
 		for i: int in 3:
 			if not main.reel_view(i).is_consistent():
 				_strip_errors += 1
+			if not main.reel_view(i).windows_are_sound():
+				_window_errors += 1
+			# 출발 시각 = START 기준 지연 시각 (테스트 시계와 컨트롤러 시계는 같은 덧셈이라 정확히 일치)
+			if spin.has_started(i) != (time >= feel.reel_start_delay[i]):
+				_delay_errors += 1
+			if not spin.has_started(i) and spin.can_stop(i):
+				_delay_errors += 1
+		if _window_rects(main) != rects:
+			_window_moves += 1
 		if GameState.spinning:
 			if _box(main, "CreditBox").value_text() != credit_text or _box(main, "WinBox").value_text() != "0" \
 					or _box(main, "PoolBox").value_text() != pool_text or _box(main, "FeverBox").value_text() != fever_text:
@@ -337,6 +358,15 @@ func _run_spin(main: Control, mode: int) -> void:
 		var motion: ReelMotion = main.reel_view(i).motion
 		if motion.position != float(stops[i]) or motion.is_spinning():
 			_final_errors += 1
+
+
+## 칸 창 9개의 화면 좌표 사각형 (회전 중 창이 움직이지 않는지 비교용)
+func _window_rects(main: Control) -> Array[Rect2]:
+	var rects: Array[Rect2] = []
+	for i: int in 3:
+		for row: int in 3:
+			rects.append(main.reel_view(i).window_at(row).get_global_rect())
+	return rects
 
 
 ## 회전 중 COIN·BET·MAX BET·CANCEL이 아무것도 바꾸지 못하고 버튼이 잠겨 있는지
@@ -367,11 +397,15 @@ func _test_stop_flow(main: Control) -> void:
 	var result: SpinResult = main.do_spin()
 	_check(result != null and GameState.spinning, "START: 결과 확정, 회전 시작")
 	_check(GameState.credit == credit_before - FULL_BET, "START 직후 크레딧은 베팅만큼만 차감")
-	_check((main.get_node("Reels/Reel1/TopShade") as ColorRect).visible, "회전 중엔 덤 가림막이 켜짐")
+	var spin: SpinController = main.spin_controller()
+	_check(spin.has_started(0) and not spin.has_started(2), "START 직후: 지연 0인 릴1만 출발, 릴3은 출발 대기")
+	_check(not (main.get_node("StopButton1") as Button).disabled and (main.get_node("StopButton3") as Button).disabled, "출발 전 릴의 STOP 버튼은 비활성, 출발한 릴은 활성")
+	_check(not main.press_stop(2), "출발 전 릴3의 STOP은 받지 않음")
+	main.advance(main.feel().reel_start_delay[2] + FRAME_DT)
 	var stop_enabled: bool = true
 	for i: int in 3:
 		stop_enabled = stop_enabled and not (main.get_node("StopButton%d" % (i + 1)) as Button).disabled
-	_check(stop_enabled, "회전 중 STOP 1·2·3 활성")
+	_check(stop_enabled, "모든 릴이 출발한 뒤 STOP 1·2·3 활성")
 	_check(not (main.get_node("StartButton") as Button).disabled, "회전 중 START(남은 릴 정지) 활성")
 	_check(_box(main, "NoticeBox").value_text().contains("STOP"), "회전 중 안내 문구에 STOP 안내")
 	_check(main.do_spin() == null and GameState.spinning, "회전 중 START는 새 스핀을 시작하지 않음")
@@ -390,7 +424,10 @@ func _test_stop_flow(main: Control) -> void:
 		all_stop_disabled = all_stop_disabled and (main.get_node("StopButton%d" % (i + 1)) as Button).disabled
 	_check(all_stop_disabled, "정산 후 STOP 버튼 모두 비활성")
 	_check(_box(main, "WinBox").value_text() == str(result.total_payout()), "정산 후 WIN 표시")
-	_check(not (main.get_node("Reels/Reel1/TopShade") as ColorRect).visible, "정지 후 덤 가림막이 꺼짐")
+	var settled_windows: bool = true
+	for i: int in 3:
+		settled_windows = settled_windows and main.reel_view(i).windows_are_sound() and main.reel_view(i).is_consistent()
+	_check(settled_windows, "정지 후 칸 창이 심볼 하나로 꽉 차 있고 스트립 순서와 같음")
 	_check(not (main.get_node("BetButton") as Button).disabled or GameState.credit < 1, "정산 후 BET 버튼 복귀")
 
 
@@ -409,6 +446,8 @@ func _write_feel_file(path: String, overrides: Dictionary, raw_text: String = ""
 		var values: Dictionary = {}
 		for key: String in FeelConfig.SPECS:
 			values[key] = FeelConfig.SPECS[key][0]
+		for key: String in FeelConfig.ARRAY_SPECS:
+			values[key] = FeelConfig.ARRAY_SPECS[key][0]
 		values.merge(overrides, true)
 		file.store_string(JSON.stringify(values))
 	else:
@@ -437,7 +476,7 @@ func _scripted_spin(main: Control, on_frame: Callable) -> Dictionary:
 		time += FRAME_DT
 		guard += 1
 		for i: int in 3:
-			if times[i] < 0.0 and not main.reel_view(i).motion.is_spinning():
+			if times[i] < 0.0 and main.spin_controller().has_started(i) and not main.reel_view(i).motion.is_spinning():
 				times[i] = time
 	return { "stops": result.stops, "times": times, "feel": main.feel() }
 

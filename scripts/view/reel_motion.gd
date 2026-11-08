@@ -15,6 +15,8 @@ var target: int = 0
 var strip_length: int = 1
 
 var _feel: FeelConfig
+## 이 스핀의 회전 속도 (칸/초) = spin_speed × 이 릴의 속도 배율
+var _speed: float = 1.0
 var _spin_time: float = 0.0
 var _stop_requested: bool = false
 var _phase_time: float = 0.0
@@ -26,6 +28,7 @@ var _decel_duration: float = 0.0
 func _init(length: int, feel: FeelConfig, start_position: int = 0) -> void:
 	strip_length = length
 	_feel = feel
+	_speed = feel.spin_speed
 	position = float(posmod(start_position, length))
 	target = posmod(start_position, length)
 
@@ -34,15 +37,22 @@ func is_spinning() -> bool:
 	return phase != Phase.IDLE
 
 
+## 이번 스핀의 회전 속도 (칸/초, 릴별 배율 적용 후)
+func current_speed() -> float:
+	return _speed
+
+
 func is_stop_requested() -> bool:
 	return _stop_requested
 
 
 ## 회전 시작. new_target은 멈출 스트립 번호. feel을 주면 이 스핀부터 그 설정을 쓴다.
+## speed_scale은 이 릴의 속도 배율 (릴별 속도차). 속도는 시작 때 한 번 정해져 스핀 도중 바뀌지 않는다.
 ## 스핀이 진행되는 동안에는 설정이 바뀌지 않는다 (바꾸려면 다음 start에서).
-func start(new_target: int, feel: FeelConfig = null) -> void:
+func start(new_target: int, feel: FeelConfig = null, speed_scale: float = 1.0) -> void:
 	if feel != null:
 		_feel = feel
+	_speed = _feel.spin_speed * speed_scale
 	target = posmod(new_target, strip_length)
 	_spin_time = 0.0
 	_phase_time = 0.0
@@ -81,13 +91,13 @@ func _advance_spinning(left: float) -> float:
 	if _spin_time < _feel.accel_time:
 		var remaining: float = _feel.accel_time - _spin_time
 		var step: float = minf(left, remaining)
-		position -= _feel.spin_speed / (2.0 * _feel.accel_time) * (pow(_spin_time + step, 2.0) - pow(_spin_time, 2.0))
+		position -= _speed / (2.0 * _feel.accel_time) * (pow(_spin_time + step, 2.0) - pow(_spin_time, 2.0))
 		_spin_time = _feel.accel_time if left >= remaining else _spin_time + step
 		return left - step
 	if _stop_requested:
 		phase = Phase.WAITING
 		return left
-	position -= _feel.spin_speed * left
+	position -= _speed * left
 	_spin_time += left
 	return 0.0
 
@@ -100,14 +110,14 @@ func _advance_waiting(left: float) -> float:
 	var to_go: float = distance - _feel.slide_cells
 	if to_go < 0.0:
 		to_go += length
-	var wait: float = to_go / _feel.spin_speed
+	var wait: float = to_go / _speed
 	if left < wait:
-		position -= _feel.spin_speed * left
+		position -= _speed * left
 		return 0.0
 	position = float(target) + _feel.slide_cells
 	_decel_start = position
 	_decel_total = _feel.slide_cells + _feel.bounce_cells
-	_decel_duration = _feel.slide_ease_power * _decel_total / _feel.spin_speed
+	_decel_duration = _feel.slide_ease_power * _decel_total / _speed
 	_phase_time = 0.0
 	phase = Phase.DECEL
 	return left - wait
