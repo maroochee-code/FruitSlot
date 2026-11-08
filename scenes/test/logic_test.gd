@@ -1,0 +1,226 @@
+extends Node
+## SlotLogic 판정 테스트. 손으로 만든 판과 테스트 전용 데이터로 규칙을 확인한다.
+## 실제 balance.json 수치를 바꿔도 이 테스트는 영향을 받지 않는다.
+
+const C: String = "CHERRY"
+const O: String = "ORANGE"
+const G: String = "GRAPE"
+const S: String = "SEVEN"
+const FULL_BET: int = 8
+
+var _passed: int = 0
+var _failed: int = 0
+
+
+func _ready() -> void:
+	_test_real_balance_loads()
+	_test_distribute_bet()
+	_test_no_win()
+	_test_horizontal_vertical_diagonal()
+	_test_inactive_line_does_not_pay()
+	_test_line_bet_multiplies_payout()
+	_test_build_grid_wraps()
+	_test_seed_reproducible()
+	_test_cherry_fever()
+	_test_fever_needs_full_bet()
+	_test_multiple_fever_symbols_one_spin()
+	_test_pool_accumulates_and_awards()
+	_test_pool_not_awarded_below_full_bet()
+	print("==================== LOGIC TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
+	# 화면 없이(--headless) 실행할 때만 종료한다. 에디터·MCP 실행은 창을 열어 둔다.
+	if DisplayServer.get_name() == "headless":
+		get_tree().quit(1 if _failed > 0 else 0)
+
+
+# ---------------------------------------------------------------- 테스트 데이터
+
+## 릴 스트립(10칸): 0~2 체리, 3~5 세븐, 6 오렌지, 7 포도, 8 오렌지, 9 포도
+func _test_dict() -> Dictionary:
+	var strip: Array = [C, C, C, S, S, S, O, G, O, G]
+	return {
+		"version": "test",
+		"reel_count": 3,
+		"visible_rows": 3,
+		"symbols": [{ "id": C }, { "id": O }, { "id": G }, { "id": S }],
+		"paytable": { C: 10, O: 15, G: 30, S: 200 },
+		"reels": [strip, strip.duplicate(), strip.duplicate()],
+		"lines": [
+			{ "id": "A", "type": "horizontal", "cells": [[0, 1], [1, 1], [2, 1]] },
+			{ "id": "B", "type": "horizontal", "cells": [[0, 0], [1, 0], [2, 0]] },
+			{ "id": "C", "type": "horizontal", "cells": [[0, 2], [1, 2], [2, 2]] },
+			{ "id": "D", "type": "diagonal", "cells": [[0, 0], [1, 1], [2, 2]] },
+			{ "id": "E", "type": "diagonal", "cells": [[0, 2], [1, 1], [2, 0]] },
+			{ "id": "F", "type": "vertical", "cells": [[0, 0], [0, 1], [0, 2]] },
+			{ "id": "G", "type": "vertical", "cells": [[1, 0], [1, 1], [1, 2]] },
+			{ "id": "H", "type": "vertical", "cells": [[2, 0], [2, 1], [2, 2]] },
+		],
+		"bet": { "max_total": 64 },
+		"fever": {
+			"min_total_bet": 8,
+			"targets": [
+				{ "symbol": C, "initial_count": 5, "bonus_multiplier": 20 },
+				{ "symbol": G, "initial_count": 2, "bonus_multiplier": 40 },
+				{ "symbol": S, "initial_count": 1, "bonus_multiplier": 100 },
+			],
+		},
+		"pool": { "initial": 500, "contribution_rate": 0.05, "min_total_bet": 8, "award_on_fever": S },
+	}
+
+
+func _new_logic() -> SlotLogic:
+	return SlotLogic.new(BalanceData.from_dict(_test_dict()), 1)
+
+
+## 열 단위로 적은 판: [[열0 위,가운데,아래], [열1 ...], [열2 ...]]
+func _grid(columns: Array) -> Array[PackedStringArray]:
+	var grid: Array[PackedStringArray] = []
+	for column: Variant in columns:
+		grid.append(PackedStringArray(column))
+	return grid
+
+
+func _win_ids(wins: Array[LineWin]) -> String:
+	var ids: PackedStringArray = PackedStringArray()
+	for win: LineWin in wins:
+		ids.append(win.line_id)
+	return ",".join(ids)
+
+
+# ---------------------------------------------------------------- 테스트
+
+func _test_real_balance_loads() -> void:
+	var data: BalanceData = BalanceData.load_from_file()
+	_check(data != null, "balance.json 로드·검사 통과")
+	if data == null:
+		return
+	_check(data.line_count() == 8, "라인 8개")
+	for i: int in data.reels.size():
+		_check(data.reels[i].size() == 32, "릴 %d 스트립 32칸" % (i + 1))
+
+
+func _test_distribute_bet() -> void:
+	var logic: SlotLogic = _new_logic()
+	_check(logic.distribute_bet(1) == PackedInt32Array([1, 0, 0, 0, 0, 0, 0, 0]), "BET 1 → A만 1")
+	_check(logic.distribute_bet(3) == PackedInt32Array([1, 1, 1, 0, 0, 0, 0, 0]), "BET 3 → A,B,C 1")
+	_check(logic.distribute_bet(8) == PackedInt32Array([1, 1, 1, 1, 1, 1, 1, 1]), "BET 8 → 모두 1")
+	_check(logic.distribute_bet(11) == PackedInt32Array([2, 2, 2, 1, 1, 1, 1, 1]), "BET 11 → A~C 2, 나머지 1")
+	_check(logic.distribute_bet(16) == PackedInt32Array([2, 2, 2, 2, 2, 2, 2, 2]), "BET 16 → 모두 2")
+	_check(not logic.is_valid_bet(0) and not logic.is_valid_bet(65) and logic.is_valid_bet(64), "베팅 범위 1~64")
+
+
+func _test_no_win() -> void:
+	var logic: SlotLogic = _new_logic()
+	var grid: Array[PackedStringArray] = _grid([[C, O, G], [O, G, C], [O, C, S]])
+	var wins: Array[LineWin] = logic.evaluate_lines(grid, logic.distribute_bet(FULL_BET))
+	_check(wins.is_empty(), "일치 없음 → 당첨 0")
+
+
+func _test_horizontal_vertical_diagonal() -> void:
+	var logic: SlotLogic = _new_logic()
+	var bets: PackedInt32Array = logic.distribute_bet(FULL_BET)
+	var middle: Array[LineWin] = logic.evaluate_lines(_grid([[O, C, G], [G, C, O], [O, C, G]]), bets)
+	_check(_win_ids(middle) == "A" and middle[0].payout == 10, "가운데 줄 체리 → A, 10")
+	var column: Array[LineWin] = logic.evaluate_lines(_grid([[G, G, G], [O, C, O], [C, O, C]]), bets)
+	_check(_win_ids(column) == "F" and column[0].payout == 30 and column[0].line_type == "vertical", "왼쪽 세로 포도 → F, 30")
+	var diagonal: Array[LineWin] = logic.evaluate_lines(_grid([[S, O, C], [O, S, O], [C, O, S]]), bets)
+	_check(_win_ids(diagonal) == "D" and diagonal[0].payout == 200, "↘ 대각 세븐 → D, 200")
+	var anti: Array[LineWin] = logic.evaluate_lines(_grid([[S, O, C], [O, C, O], [C, O, S]]), bets)
+	_check(_win_ids(anti) == "E" and anti[0].symbol == C, "↗ 대각 체리 → E")
+	var full: Array[LineWin] = logic.evaluate_lines(_grid([[C, C, C], [C, C, C], [C, C, C]]), bets)
+	_check(full.size() == 8, "9칸 모두 체리 → 8라인 모두 당첨")
+
+
+func _test_inactive_line_does_not_pay() -> void:
+	var logic: SlotLogic = _new_logic()
+	var grid: Array[PackedStringArray] = _grid([[C, O, G], [C, G, O], [C, O, G]])
+	_check(logic.evaluate_lines(grid, logic.distribute_bet(1)).is_empty(), "BET 1(A만) → 윗줄(B) 체리는 미지급")
+	_check(_win_ids(logic.evaluate_lines(grid, logic.distribute_bet(2))) == "B", "BET 2 → B 지급")
+
+
+func _test_line_bet_multiplies_payout() -> void:
+	var logic: SlotLogic = _new_logic()
+	var grid: Array[PackedStringArray] = _grid([[O, C, G], [G, C, O], [O, C, G]])
+	var wins: Array[LineWin] = logic.evaluate_lines(grid, logic.distribute_bet(24))
+	_check(wins.size() == 1 and wins[0].line_bet == 3 and wins[0].payout == 30, "라인 베팅 3 × 체리 10 = 30")
+
+
+func _test_build_grid_wraps() -> void:
+	var logic: SlotLogic = _new_logic()
+	var grid: Array[PackedStringArray] = logic.build_grid(PackedInt32Array([9, 0, 8]))
+	_check(grid[0] == PackedStringArray([G, C, C]), "정지 9 → 9,0,1번 (끝에서 처음으로 이어짐)")
+	_check(grid[1] == PackedStringArray([C, C, C]), "정지 0 → 0,1,2번")
+	_check(grid[2] == PackedStringArray([O, G, C]), "정지 8 → 8,9,0번")
+
+
+func _test_seed_reproducible() -> void:
+	var first: SlotLogic = _new_logic()
+	var second: SlotLogic = _new_logic()
+	var same: bool = true
+	for i: int in 200:
+		if first.spin(FULL_BET).stops != second.spin(FULL_BET).stops:
+			same = false
+	_check(same, "같은 시드 → 같은 결과 200회")
+
+
+func _test_cherry_fever() -> void:
+	var logic: SlotLogic = _new_logic()
+	var all_cherry: PackedInt32Array = PackedInt32Array([0, 0, 0])
+	var result: SpinResult
+	for i: int in 4:
+		result = logic.resolve_stops(all_cherry, FULL_BET)
+	_check(result.line_payout == 80, "체리 8라인 당첨 → 80")
+	_check(logic.get_fever_counts()[C] == 1, "여러 라인 당첨돼도 스핀당 1 감소 (5 → 4회 후 1)")
+	result = logic.resolve_stops(all_cherry, FULL_BET)
+	_check(result.fever_triggers == PackedStringArray([C]), "5번째 체리 당첨 → 체리 피버 발동")
+	_check(result.fever_bonus == 160, "피버 보너스 = 20 × 총 베팅 8 = 160")
+	_check(result.total_payout() == 240, "총 지급 = 라인 80 + 피버 160")
+	_check(logic.get_fever_counts()[C] == 5, "발동 후 카운터 초기값 5로 리셋")
+
+
+func _test_fever_needs_full_bet() -> void:
+	var logic: SlotLogic = _new_logic()
+	var result: SpinResult = logic.resolve_stops(PackedInt32Array([0, 0, 0]), 7)
+	_check(result.line_payout == 70 and result.fever_hits.is_empty(), "BET 7 → 당첨은 지급, 피버 카운트 없음")
+	_check(logic.get_fever_counts()[C] == 5, "BET 7 → 체리 카운터 그대로 5")
+
+
+func _test_multiple_fever_symbols_one_spin() -> void:
+	var logic: SlotLogic = _new_logic()
+	# 정지 [9,9,9] → 모든 열 G,C,C : 윗줄 포도(B), 가운데·아랫줄 체리(A,C)
+	var both: PackedInt32Array = PackedInt32Array([9, 9, 9])
+	var first: SpinResult = logic.resolve_stops(both, FULL_BET)
+	_check(_win_ids(first.line_wins) == "A,B,C", "윗줄 포도 + 가운데·아랫줄 체리 → A,B,C")
+	_check(first.fever_hits == PackedStringArray([C, G]), "체리·포도 동시 당첨 → 둘 다 1 감소")
+	_check(logic.get_fever_counts()[C] == 4 and logic.get_fever_counts()[G] == 1, "체리 5→4, 포도 2→1")
+	var second: SpinResult = logic.resolve_stops(both, FULL_BET)
+	_check(second.fever_triggers == PackedStringArray([G]) and second.fever_bonus == 320, "포도 피버 발동, 40 × 8 = 320")
+
+
+func _test_pool_accumulates_and_awards() -> void:
+	var logic: SlotLogic = _new_logic()
+	var no_seven: PackedInt32Array = PackedInt32Array([6, 7, 6])
+	for i: int in 3:
+		logic.resolve_stops(no_seven, FULL_BET)
+	_check(logic.get_pool() == 501, "풀 500 + 0.4 × 3 = 501.2 → 표시 501")
+	var result: SpinResult = logic.resolve_stops(PackedInt32Array([3, 3, 3]), FULL_BET)
+	_check(result.line_payout == 1600, "세븐 9칸 → 8라인 × 200 = 1600")
+	_check(result.fever_triggers.has(S) and result.fever_bonuses[S] == 800, "세븐 피버 보너스 = 100 × 8 = 800")
+	_check(result.pool_won == 501, "풀 획득 = 501.6의 정수 501 (적립 후 판정)")
+	_check(logic.get_pool() == 500, "획득 후 풀 500으로 리셋")
+	_check(result.total_payout() == 1600 + 800 + 501, "총 지급 = 라인 + 피버 + 풀")
+
+
+func _test_pool_not_awarded_below_full_bet() -> void:
+	var logic: SlotLogic = _new_logic()
+	var result: SpinResult = logic.resolve_stops(PackedInt32Array([3, 3, 3]), 4)
+	_check(result.pool_won == 0 and result.fever_bonus == 0, "BET 4 세븐 → 피버·풀 없음")
+	_check(logic.get_pool() == 500, "BET 4도 풀 적립: 500 + 0.2 → 표시 500")
+
+
+func _check(condition: bool, label: String) -> void:
+	if condition:
+		_passed += 1
+		print("  [PASS] " + label)
+	else:
+		_failed += 1
+		push_error("  [FAIL] " + label)

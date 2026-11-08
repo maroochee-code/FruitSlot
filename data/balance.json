@@ -1,0 +1,71 @@
+{
+	"version": "0.1",
+	"reel_count": 3,
+	"visible_rows": 3,
+	"symbols": [
+		{ "id": "CHERRY", "name": "체리", "grade": "low" },
+		{ "id": "ORANGE", "name": "오렌지", "grade": "low" },
+		{ "id": "MELON", "name": "수박", "grade": "mid" },
+		{ "id": "GRAPE", "name": "포도", "grade": "mid" },
+		{ "id": "BELL", "name": "벨", "grade": "high" },
+		{ "id": "BAR", "name": "BAR", "grade": "high" },
+		{ "id": "SEVEN", "name": "세븐", "grade": "top" }
+	],
+	"paytable": {
+		"CHERRY": 10,
+		"ORANGE": 15,
+		"MELON": 20,
+		"GRAPE": 30,
+		"BELL": 50,
+		"BAR": 100,
+		"SEVEN": 200
+	},
+	"reels": [
+		[
+			"CHERRY", "CHERRY", "CHERRY", "BAR", "MELON", "MELON", "GRAPE", "ORANGE",
+			"ORANGE", "ORANGE", "BELL", "CHERRY", "MELON", "GRAPE", "GRAPE", "CHERRY",
+			"SEVEN", "ORANGE", "MELON", "CHERRY", "CHERRY", "BELL", "GRAPE", "ORANGE",
+			"ORANGE", "MELON", "CHERRY", "BAR", "GRAPE", "ORANGE", "BELL", "MELON"
+		],
+		[
+			"ORANGE", "ORANGE", "ORANGE", "MELON", "CHERRY", "GRAPE", "BELL", "CHERRY",
+			"CHERRY", "CHERRY", "BAR", "MELON", "MELON", "ORANGE", "GRAPE", "CHERRY",
+			"BELL", "GRAPE", "GRAPE", "ORANGE", "SEVEN", "CHERRY", "MELON", "ORANGE",
+			"BAR", "CHERRY", "CHERRY", "MELON", "GRAPE", "BELL", "ORANGE", "MELON"
+		],
+		[
+			"MELON", "CHERRY", "CHERRY", "GRAPE", "ORANGE", "BELL", "MELON", "MELON",
+			"SEVEN", "CHERRY", "GRAPE", "ORANGE", "ORANGE", "ORANGE", "BAR", "CHERRY",
+			"CHERRY", "CHERRY", "GRAPE", "MELON", "BELL", "ORANGE", "CHERRY", "GRAPE",
+			"GRAPE", "MELON", "BAR", "ORANGE", "CHERRY", "BELL", "ORANGE", "MELON"
+		]
+	],
+	"lines": [
+		{ "id": "A", "type": "horizontal", "cells": [[0, 1], [1, 1], [2, 1]] },
+		{ "id": "B", "type": "horizontal", "cells": [[0, 0], [1, 0], [2, 0]] },
+		{ "id": "C", "type": "horizontal", "cells": [[0, 2], [1, 2], [2, 2]] },
+		{ "id": "D", "type": "diagonal", "cells": [[0, 0], [1, 1], [2, 2]] },
+		{ "id": "E", "type": "diagonal", "cells": [[0, 2], [1, 1], [2, 0]] },
+		{ "id": "F", "type": "vertical", "cells": [[0, 0], [0, 1], [0, 2]] },
+		{ "id": "G", "type": "vertical", "cells": [[1, 0], [1, 1], [1, 2]] },
+		{ "id": "H", "type": "vertical", "cells": [[2, 0], [2, 1], [2, 2]] }
+	],
+	"bet": {
+		"max_total": 64
+	},
+	"fever": {
+		"min_total_bet": 8,
+		"targets": [
+			{ "symbol": "CHERRY", "initial_count": 5, "bonus_multiplier": 20 },
+			{ "symbol": "GRAPE", "initial_count": 9, "bonus_multiplier": 40 },
+			{ "symbol": "BELL", "initial_count": 7, "bonus_multiplier": 30 },
+			{ "symbol": "SEVEN", "initial_count": 1, "bonus_multiplier": 100 }
+		]
+	},
+	"pool": {
+		"initial": 500,
+		"contribution_rate": 0.05,
+		"min_total_bet": 8,
+		"award_on_fever": "SEVEN"
+	}
+}
