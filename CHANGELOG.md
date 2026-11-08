@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 0.2.0 — 2026-11-08 (2단계: 정지 화면)
+
+### 추가
+- `scenes/main.tscn` (메인 씬으로 지정): 3×3 릴 영역, START 버튼, 스페이스/엔터로 `SlotLogic.spin()` 호출 후 결과 즉시 표시
+- 심볼 7종 색 박스 + 글자 (`scripts/view/symbol_style.gd`). 세븐은 검정 바탕 + 금색 큰 7 + 금테
+- 디버그 창 (F1 토글): 정지 위치, 격자, 당첨 라인, 당첨금, 피버·풀 상태, 화면↔로직 일치 여부
+- 3단계용 빈 자리: 라인 라벨, STOP 1~3, 타이틀, POOL, 피버 카운터, CREDIT/안내/WIN/BET, COIN/BET 버튼(비활성)
+- `scenes/test/view_test.tscn`: START 200회 자동 실행, 화면 칸과 로직 결과 비교
+
+### 변경
+- `project.godot`: 메인 씬 지정 (`run/main_scene`)
+
 ## 0.1.1 — 2026-11-08 (밸런스 1차 조정, 수치만 변경)
 
 ### 변경 (`data/balance.json` v0.1 → v0.2, 코드 변경 없음)
