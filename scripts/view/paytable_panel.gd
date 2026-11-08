@@ -75,15 +75,15 @@ func _add_row(symbol: String, data: BalanceData, top_left: Vector2, row_height: 
 ## 화면의 칸과 같은 색의 작은 박스
 func _make_mini_box(symbol: String, pos: Vector2) -> Panel:
 	var style: Dictionary = SymbolStyle.get_style(symbol)
-	var mini: Panel = Panel.new()
-	mini.position = pos
-	mini.size = MINI_SIZE
+	var mini_box: Panel = Panel.new()
+	mini_box.position = pos
+	mini_box.size = MINI_SIZE
 	var box: StyleBoxFlat = StyleBoxFlat.new()
 	box.bg_color = style["bg"]
 	box.border_color = style["border"]
 	box.set_border_width_all(MINI_BORDER)
-	mini.add_theme_stylebox_override("panel", box)
-	return mini
+	mini_box.add_theme_stylebox_override("panel", box)
+	return mini_box
 
 
 func _make_label(text: String, color: Color, align: HorizontalAlignment) -> Label:

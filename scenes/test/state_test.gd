@@ -22,6 +22,8 @@ func _ready() -> void:
 	_test_max_bet()
 	_test_cancel_bet()
 	_test_spin_accounting()
+	_test_two_phase_spin()
+	_test_spin_lock()
 	_test_bet_lowered_when_credit_short()
 	_test_bet_zero_when_broke()
 	print("==================== STATE TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
@@ -128,14 +130,14 @@ func _test_bet_limited_by_credit() -> void:
 
 func _test_start_blocked() -> void:
 	var state: Node = _fresh()
-	_check(state.start_spin() == null and _rejects == [&"no_credit"], "크레딧 0에서 START 거절")
+	_check(state.play_spin() == null and _rejects == [&"no_credit"], "크레딧 0에서 START 거절")
 	state.insert_coin()
 	_rejects.clear()
-	_check(state.start_spin() == null and _rejects == [&"no_bet"], "베팅 0에서 START 거절(no_bet)")
+	_check(state.play_spin() == null and _rejects == [&"no_bet"], "베팅 0에서 START 거절(no_bet)")
 	_check(state.credit == state.coin_amount, "거절된 START는 크레딧을 건드리지 않음")
 	state.bet = 9999
 	_rejects.clear()
-	_check(state.start_spin() == null and _rejects == [&"no_credit"], "베팅이 크레딧보다 크면 START 거절")
+	_check(state.play_spin() == null and _rejects == [&"no_credit"], "베팅이 크레딧보다 크면 START 거절")
 	_check(state.credit == state.coin_amount, "거절 시 크레딧 불변")
 	state.free()
 
@@ -203,7 +205,7 @@ func _test_spin_accounting() -> void:
 			state.insert_coin()
 		_bet_up_to(state, 8)
 		var before: int = state.credit
-		var result: SpinResult = state.start_spin()
+		var result: SpinResult = state.play_spin()
 		if result == null:
 			bad += 1
 			continue
@@ -228,7 +230,7 @@ func _test_bet_lowered_when_credit_short() -> void:
 		# 람다는 바깥 변수를 복사해 가므로, 값을 받을 배열을 따로 둔다.
 		var captured: Array[int] = [-1]
 		state.connect("spin_finished", func(_r: SpinResult, from: int) -> void: captured[0] = from)
-		var result: SpinResult = state.start_spin()
+		var result: SpinResult = state.play_spin()
 		var credit: int = state.credit
 		var lowered_from: int = captured[0]
 		if credit < 8:
@@ -254,7 +256,7 @@ func _test_bet_zero_when_broke() -> void:
 		var state: Node = _fresh(rng_seed)
 		state.credit = 8
 		state.bet = 8
-		state.start_spin()
+		state.play_spin()
 		if state.credit == 0:
 			broke_seen = true
 			if state.bet != 0 or state.can_start() or state.can_raise_bet():
@@ -264,3 +266,57 @@ func _test_bet_zero_when_broke() -> void:
 		state.free()
 	_check(broke_seen, "크레딧 0이 되는 사례 발생")
 	_check(bad == 0, "크레딧 0이면 베팅 0, 라인 베팅 모두 0, START·BET 불가 (어긋난 횟수 %d)" % bad)
+
+
+## START는 "차감 + 결과 확정", 정산은 따로. 정산 전에는 당첨금이 크레딧·WIN에 들어오지 않는다.
+func _test_two_phase_spin() -> void:
+	var bad: int = 0
+	var seen_win: bool = false
+	for rng_seed: int in 300:
+		var state: Node = _fresh(rng_seed)
+		state.credit = 100
+		_bet_up_to(state, 8)
+		var started: Array[SpinResult] = []
+		var finished: Array[SpinResult] = []
+		state.connect("spin_started", func(r: SpinResult) -> void: started.append(r))
+		state.connect("spin_finished", func(r: SpinResult, _from: int) -> void: finished.append(r))
+		var result: SpinResult = state.start_spin()
+		if result == null or started.size() != 1 or not state.spinning:
+			bad += 1
+			state.free()
+			continue
+		if state.credit != 92 or state.last_win != 0 or not finished.is_empty():
+			bad += 1
+		if state.can_start() or state.start_spin() != null:
+			bad += 1
+		var settled: SpinResult = state.settle_spin()
+		if settled != result or finished.size() != 1 or finished[0] != started[0] or state.spinning:
+			bad += 1
+		if state.credit != 92 + result.total_payout() or state.last_win != result.total_payout():
+			bad += 1
+		if result.total_payout() > 0:
+			seen_win = true
+		if state.settle_spin() != null:
+			bad += 1
+		state.free()
+	_check(seen_win, "당첨 사례가 한 번 이상 나옴 (정산 검사용)")
+	_check(bad == 0, "START는 차감만, 정산 후에 당첨금 합산, 이중 시작·이중 정산 거절 (어긋난 횟수 %d)" % bad)
+
+
+## 회전 중에는 COIN/BET/MAX BET/CANCEL/START가 모두 막히고 상태가 바뀌지 않는다.
+func _test_spin_lock() -> void:
+	var state: Node = _fresh(5)
+	state.credit = 100
+	_bet_up_to(state, 8)
+	state.start_spin()
+	var credit: int = state.credit
+	var bet: int = state.bet
+	var lines: Array[int] = _ints(state.line_bets)
+	state.insert_coin()
+	var results: Array[bool] = [state.raise_bet(), state.max_bet(), state.cancel_bet()]
+	_check(results == [false, false, false], "회전 중 BET·MAX BET·CANCEL 거절")
+	_check(state.credit == credit and state.bet == bet and _ints(state.line_bets) == lines, "회전 중 COIN·BET·MAX BET·CANCEL이 상태를 바꾸지 않음")
+	_check(not state.can_raise_bet() and not state.can_max_bet() and not state.can_cancel_bet() and not state.can_start(), "회전 중 can_* 모두 false")
+	state.settle_spin()
+	_check(state.can_cancel_bet(), "정산 뒤에는 다시 조작 가능")
+	state.free()

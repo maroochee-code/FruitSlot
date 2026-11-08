@@ -5,9 +5,10 @@ extends Control
 # --- 화면 배치 (640×480 기준) ---
 const REEL_COLS: int = 3
 const REEL_ROWS: int = 3
-const CELL_SIZE: Vector2 = Vector2(100, 88)
+## 칸 높이 78: 회전 중 위아래로 반 칸씩 더 보여도 STOP 자리(y=340)를 덮지 않는 값
+const CELL_SIZE: Vector2 = Vector2(100, 78)
 const CELL_GAP: float = 4.0
-const REEL_ORIGIN: Vector2 = Vector2(76, 60)
+const REEL_ORIGIN: Vector2 = Vector2(76, 55)
 const STOP_SLOT_Y: float = 340.0
 const STOP_SLOT_SIZE: Vector2 = Vector2(100, 28)
 const BUTTON_ROW_Y: float = 376.0
@@ -36,13 +37,30 @@ const PLACEHOLDER_BORDER: Color = Color("3A3A48")
 const PLACEHOLDER_TEXT: Color = Color("6A6A7A")
 const PLACEHOLDER_FONT_SIZE: int = 10
 const BACKGROUND_COLOR: Color = Color("0C0C14")
+## 회전 중 창 위아래 덤 부분을 가리는 어두운 막
+const REEL_SHADE_COLOR: Color = Color(0.047, 0.047, 0.078, 0.55)
 const CREDIT_COLOR: Color = Color("7CFF9A")
 const WIN_COLOR: Color = Color("FFD700")
 const POOL_COLOR: Color = Color("FFB040")
+## feel.json 수정 시각을 확인하는 간격 (초)
+const FEEL_POLL_SEC: float = 0.5
 ## 한글이 깨지지 않도록 시스템 한글 글꼴을 우선 지정
 const FONT_NAMES: PackedStringArray = ["Malgun Gothic", "맑은 고딕", "Noto Sans CJK KR", "Apple SD Gothic Neo", "sans-serif"]
 
 var _data: BalanceData
+## 지금 도는(또는 마지막으로 돈) 스핀이 쓰는 손맛 설정. 스핀 시작 때만 바뀐다.
+var _feel: FeelConfig
+## 파일에서 가장 최근에 읽은 설정. 다음 START에서 _feel이 된다.
+var _latest_feel: FeelConfig
+var _feel_path: String = FeelConfig.DEFAULT_PATH
+var _feel_mtime: int = 0
+var _feel_poll_left: float = FEEL_POLL_SEC
+var _reels: Array[ReelView] = []
+var _spin: SpinController
+var _stop_buttons: Array[Button] = []
+## 마지막 릴이 멈춘 뒤 정산까지 남은 시간 (정산 대기 중일 때만)
+var _settle_left: float = 0.0
+var _settling: bool = false
 var _cells: Array[Array] = []
 var _overlay: LineOverlay
 var _debug: DebugPanel
@@ -69,16 +87,78 @@ func _ready() -> void:
 		push_error("main: GameState 초기화 실패")
 		return
 	_data = GameState.get_balance()
+	_feel = FeelConfig.load_from_file()
+	_latest_feel = _feel
+	set_feel_path(FeelConfig.DEFAULT_PATH)
 	_build_background()
 	_build_reels()
 	_build_overlay()
 	_build_placeholders()
 	_build_info_boxes()
 	_build_buttons()
+	_build_stop_buttons()
 	_build_debug()
 	_connect_state()
 	GameState.refresh()
-	_refresh_side_panel()
+	_refresh_side_panel(GameState.get_pool(), GameState.get_fever_counts())
+	_refresh_buttons()
+
+
+func _process(delta: float) -> void:
+	advance(delta)
+	_feel_poll_left -= delta
+	if _feel_poll_left <= 0.0:
+		_feel_poll_left = FEEL_POLL_SEC
+		poll_feel_file()
+
+
+## 감시할 feel 파일을 정하고 현재 수정 시각을 기억한다.
+func set_feel_path(path: String) -> void:
+	_feel_path = path
+	_feel_mtime = FileAccess.get_modified_time(path)
+
+
+## 파일 수정 시각이 바뀌었으면 다시 읽는다. 다시 읽었으면 true.
+func poll_feel_file() -> bool:
+	var mtime: int = FileAccess.get_modified_time(_feel_path)
+	if mtime == _feel_mtime:
+		return false
+	_feel_mtime = mtime
+	return reload_feel()
+
+
+## feel 파일을 다시 읽어 "다음 스핀부터 쓸 설정"으로 보관한다. 진행 중인 스핀에는 영향이 없다.
+## 파일이 깨져서 못 읽으면 이전 설정을 그대로 두고 false를 돌려준다.
+func reload_feel() -> bool:
+	var loaded: FeelConfig = FeelConfig.load_from_file(_feel_path, false)
+	if not loaded.file_ok:
+		_announce_feel("feel.json을 읽지 못해 이전 값을 유지합니다. (파일을 확인하세요)")
+		return false
+	_latest_feel = loaded
+	var message: String = "feel.json 다시 읽음: 다음 스핀부터 적용"
+	if not loaded.errors.is_empty():
+		message += "\n문제 %d개는 기본값으로 대체: %s" % [loaded.errors.size(), loaded.errors[0]]
+	_announce_feel(message)
+	return true
+
+
+func _announce_feel(message: String) -> void:
+	print("[feel] ", message.replace("\n", " / "))
+	if not GameState.spinning:
+		_notice_override = message
+		_refresh_notice()
+
+
+## 시간을 delta초 진행한다. 릴 움직임, 자동 정지, 정산 대기를 처리한다. (테스트는 이걸 직접 부른다.)
+func advance(delta: float) -> void:
+	if _spin.is_active():
+		_spin.advance(delta)
+		for reel: ReelView in _reels:
+			reel.refresh()
+	if _settling:
+		_settle_left -= delta
+		if _settle_left <= 0.0:
+			_settle_now()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -96,13 +176,48 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			GameState.cancel_bet()
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
 			do_spin()
+		KEY_1, KEY_KP_1:
+			press_stop(0)
+		KEY_2, KEY_KP_2:
+			press_stop(1)
+		KEY_3, KEY_KP_3:
+			press_stop(2)
 		KEY_F1:
 			toggle_debug()
+		KEY_F6:
+			reload_feel()
 
 
-## START. 크레딧 차감과 스핀은 GameState가 하고, 결과는 시그널(_on_spin_finished)로 받아 표시한다.
+## START. 멈춰 있으면 크레딧 차감 + 결과 확정(GameState), 릴이 돌고 있으면 남은 릴을 차례로 정지시킨다.
+## 새 스핀이 시작됐을 때만 결과를 돌려준다.
 func do_spin() -> SpinResult:
+	if GameState.spinning:
+		if _spin.press_quick_stop():
+			_refresh_buttons()
+		return null
 	return GameState.start_spin()
+
+
+## STOP 1/2/3 (index 0~2). 받아들여지면 true.
+func press_stop(index: int) -> bool:
+	var accepted: bool = _spin.press_stop(index)
+	_refresh_buttons()
+	return accepted
+
+
+## 릴 index(0~2)의 화면 노드 (테스트용)
+func reel_view(index: int) -> ReelView:
+	return _reels[index]
+
+
+## 지금 스핀이 쓰는 손맛 설정
+func feel() -> FeelConfig:
+	return _feel
+
+
+## 다음 스핀부터 쓸 손맛 설정 (파일에서 가장 최근에 읽은 것)
+func pending_feel() -> FeelConfig:
+	return _latest_feel
 
 
 ## 화면 칸에 실제로 표시된 심볼이 마지막 로직 결과와 같은지 비교한다.
@@ -128,7 +243,10 @@ func _connect_state() -> void:
 	GameState.win_changed.connect(_on_win_changed)
 	GameState.coin_inserted.connect(_on_coin_inserted)
 	GameState.action_rejected.connect(_on_action_rejected)
+	GameState.spin_started.connect(_on_spin_started)
 	GameState.spin_finished.connect(_on_spin_finished)
+	_spin.reel_stopped.connect(_on_reel_stopped)
+	_spin.all_stopped.connect(_on_all_stopped)
 
 
 func _on_credit_changed(credit: int) -> void:
@@ -164,11 +282,44 @@ func _on_action_rejected(reason: StringName) -> void:
 	_refresh_notice()
 
 
+## START 직후: 결과는 이미 정해졌다. 릴만 돌리고, 숫자(WIN·POOL·피버)는 정지 후에 보여준다.
+func _on_spin_started(result: SpinResult) -> void:
+	_last_result = result
+	_overlay.clear_wins()
+	_notice_override = ""
+	_settling = false
+	# 새 손맛 설정은 여기서만 받아들인다. 이 스핀은 끝까지 이 설정 한 벌로 움직인다.
+	_feel = _latest_feel
+	for reel: ReelView in _reels:
+		reel.set_spinning_look(true)
+	_spin.begin(result.stops, _feel)
+	_refresh_buttons()
+	_refresh_notice()
+
+
+func _on_reel_stopped(index: int) -> void:
+	_reels[index].refresh()
+	_reels[index].set_spinning_look(false)
+	_refresh_buttons()
+
+
+## 세 릴이 모두 멈춤: 잠시 뒤(result_delay) 정산하고 당첨 연출을 시작한다.
+func _on_all_stopped() -> void:
+	_settle_left = _feel.result_delay
+	_settling = true
+	if _settle_left <= 0.0:
+		_settle_now()
+
+
+func _settle_now() -> void:
+	_settling = false
+	GameState.settle_spin()
+
+
 func _on_spin_finished(result: SpinResult, lowered_from: int) -> void:
 	_last_result = result
-	_show_grid(result.grid)
 	_overlay.show_wins(result.line_wins)
-	_refresh_side_panel()
+	_refresh_side_panel(result.pool_after, result.fever_counts_after)
 	_notice_override = _build_result_notice(result, lowered_from)
 	_debug.show_result(result, _data, grid_matches_logic(), GameState.credit)
 	_refresh_buttons()
@@ -189,6 +340,8 @@ func _refresh_notice() -> void:
 	var lines: PackedStringArray = PackedStringArray()
 	if not _notice_override.is_empty():
 		lines.append(_notice_override)
+	elif GameState.spinning:
+		lines.append("STOP 1·2·3 또는 START로 릴을 멈추세요.")
 	elif GameState.credit < 1:
 		lines.append("COIN(C)으로 크레딧을 넣으세요.")
 	elif GameState.bet < 1:
@@ -202,24 +355,19 @@ func _refresh_buttons() -> void:
 	_bet_button.disabled = not GameState.can_raise_bet()
 	_max_bet_button.disabled = not GameState.can_max_bet()
 	_cancel_button.disabled = not GameState.can_cancel_bet()
-	_start_button.disabled = not GameState.can_start()
+	# 회전 중에는 START가 "남은 릴 차례로 정지" 역할을 하므로 정지시킬 릴이 남아 있으면 켠다.
+	_start_button.disabled = not (GameState.can_start() or _spin.can_quick_stop())
+	for i: int in _stop_buttons.size():
+		_stop_buttons[i].disabled = not _spin.can_stop(i)
 
 
-## 오른쪽 패널: POOL 숫자와 피버 카운터 (연출은 5단계)
-func _refresh_side_panel() -> void:
-	_pool_box.set_value(str(GameState.get_pool()))
-	var counts: Dictionary[String, int] = GameState.get_fever_counts()
+## 오른쪽 패널: POOL 숫자와 피버 카운터 (연출은 5단계). 스핀 결과의 스냅샷을 받아 정지 후에만 갱신한다.
+func _refresh_side_panel(pool: int, counts: Dictionary[String, int]) -> void:
+	_pool_box.set_value(str(pool))
 	var rows: PackedStringArray = PackedStringArray()
 	for symbol: String in _data.fever_symbols:
 		rows.append("%s ×%d" % [_data.symbol_names.get(symbol, symbol), counts[symbol]])
 	_fever_box.set_value("\n".join(rows))
-
-
-func _show_grid(grid: Array[PackedStringArray]) -> void:
-	for col: int in REEL_COLS:
-		for row: int in REEL_ROWS:
-			var cell: SymbolCell = _cells[col][row]
-			cell.show_symbol(grid[col][row])
 
 
 func _apply_font() -> void:
@@ -242,16 +390,23 @@ func _build_reels() -> void:
 	var holder: Control = Control.new()
 	holder.name = "Reels"
 	add_child(holder)
+	var extension: float = CELL_SIZE.y * _feel.half_row
+	var motions: Array[ReelMotion] = []
 	for col: int in REEL_COLS:
+		var strip: PackedStringArray = _data.reels[col]
+		var motion: ReelMotion = ReelMotion.new(strip.size(), _feel)
+		var reel: ReelView = ReelView.new()
+		reel.name = "Reel%d" % (col + 1)
+		reel.position = REEL_ORIGIN + Vector2(col * (CELL_SIZE.x + CELL_GAP), -extension)
+		holder.add_child(reel)
+		reel.setup(strip, motion, CELL_SIZE, CELL_GAP, REEL_ROWS, extension, REEL_SHADE_COLOR)
 		var column: Array = []
 		for row: int in REEL_ROWS:
-			var cell: SymbolCell = SymbolCell.new()
-			cell.name = "Cell_%d_%d" % [col, row]
-			cell.position = REEL_ORIGIN + Vector2(col * (CELL_SIZE.x + CELL_GAP), row * (CELL_SIZE.y + CELL_GAP))
-			cell.size = CELL_SIZE
-			holder.add_child(cell)
-			column.append(cell)
+			column.append(reel.cell_at(row))
 		_cells.append(column)
+		_reels.append(reel)
+		motions.append(motion)
+	_spin = SpinController.new(motions, _feel)
 
 
 func _build_overlay() -> void:
@@ -261,12 +416,18 @@ func _build_overlay() -> void:
 	_overlay.setup(_data, _cells, REEL_ORIGIN, CELL_SIZE, CELL_GAP)
 
 
-## 아직 기능이 없는 자리(STOP 버튼은 4단계, 타이틀은 6단계)
+## 아직 기능이 없는 자리 (타이틀은 6단계)
 func _build_placeholders() -> void:
+	_add_placeholder("Title", "타이틀", TITLE_RECT)
+
+
+## 릴 아래 STOP 1/2/3 버튼
+func _build_stop_buttons() -> void:
 	for col: int in REEL_COLS:
 		var x: float = REEL_ORIGIN.x + col * (CELL_SIZE.x + CELL_GAP)
-		_add_placeholder("StopSlot%d" % (col + 1), "STOP %d" % (col + 1), Rect2(Vector2(x, STOP_SLOT_Y), STOP_SLOT_SIZE))
-	_add_placeholder("Title", "타이틀", TITLE_RECT)
+		var button: Button = _make_button("StopButton%d" % (col + 1), "STOP %d" % (col + 1), Rect2(Vector2(x, STOP_SLOT_Y), STOP_SLOT_SIZE))
+		button.pressed.connect(press_stop.bind(col))
+		_stop_buttons.append(button)
 
 
 func _add_placeholder(node_name: String, text: String, rect: Rect2) -> void:

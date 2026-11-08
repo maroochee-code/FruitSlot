@@ -1,30 +1,50 @@
 extends Node
-## 화면 검증: main 씬을 띄우고 키보드·START를 여러 번 눌러서
-## 화면 칸, 크레딧/WIN/BET/POOL/피버 표시, 라인 라벨, 당첨 선이 로직 결과와 매번 같은지 확인한다.
+## 화면 검증: main 씬을 띄우고 키보드·START·STOP을 여러 방식으로 눌러서
+## 화면 칸, 릴 정지 위치, CREDIT/WIN/BET/POOL/피버 표시, 라인 라벨, 당첨 선이 로직 결과와 매번 같은지 확인한다.
+## 시간은 main.advance()로 테스트가 직접 흘린다 (실제 시간에 의존하지 않음).
 
 @export var spin_count: int = 300
 @export var quit_when_headless: bool = true
 
 const FULL_BET: int = 8
 const TEST_SEED: int = 12345
+const FRAME_DT: float = 1.0 / 60.0
+const SPIKE_DT: float = 0.2
+const SPIKE_CHANCE: float = 0.02
+const MAX_SPIN_SEC: float = 40.0
+## 회전 중 조작 잠금을 한 번 검사하는 시각 (START 잠금 시간보다 뒤)
+const LOCK_CHECK_SEC: float = 0.5
+const INPUT_MODES: int = 4
 
 var _passed: int = 0
 var _failed: int = 0
+var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
+var _strip_errors: int = 0
+var _early_reveal: int = 0
+var _lock_errors: int = 0
+var _final_errors: int = 0
+var _stuck_spins: int = 0
 
 
 func _ready() -> void:
 	# 오토로드 상태를 처음 상태로 되돌린 뒤 시작한다.
 	GameState.initialize(GameState.get_balance(), GameState.load_economy(), TEST_SEED)
+	_rng.seed = TEST_SEED
 	var main_scene: PackedScene = load("res://scenes/main.tscn")
 	var main: Control = main_scene.instantiate()
 	add_child(main)
+	# 시간은 테스트가 main.advance()로 직접 흘린다.
+	main.set_process(false)
 	await get_tree().process_frame
 	_test_initial_screen(main)
+	_test_layout(main)
 	_test_paytable(main)
 	_test_keyboard(main)
 	_test_max_and_cancel(main)
 	await _test_spins(main)
 	_test_labels_follow_bet(main)
+	_test_stop_flow(main)
+	_test_feel_reload(main)
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -63,6 +83,26 @@ func _test_initial_screen(main: Control) -> void:
 	_check((main.get_node("BetButton") as Button).disabled, "처음 BET 비활성")
 	_check(not (main.get_node("CoinButton") as Button).disabled, "COIN은 항상 활성")
 	_check(_box(main, "NoticeBox").value_text().contains("COIN"), "크레딧 0이면 COIN 안내")
+	var stops_disabled: bool = true
+	for i: int in 3:
+		stops_disabled = stops_disabled and (main.get_node("StopButton%d" % (i + 1)) as Button).disabled
+	_check(stops_disabled, "멈춰 있을 때 STOP 1·2·3 버튼 비활성")
+
+
+func _test_layout(main: Control) -> void:
+	var stop_y: float = (main.get_node("StopButton1") as Button).position.y
+	var fits: bool = true
+	for i: int in 3:
+		var reel: ReelView = main.reel_view(i)
+		fits = fits and reel.position.y >= 0.0 and reel.position.y + reel.size.y <= stop_y
+	_check(fits, "릴 창(위아래 반 칸 포함)이 화면 안, STOP 버튼 위에서 끝남")
+	var feel: FeelConfig = main.feel()
+	var extension: float = main.CELL_SIZE.y * feel.half_row
+	var window: float = 3.0 * main.CELL_SIZE.y + 2.0 * main.CELL_GAP
+	_check(is_equal_approx(main.reel_view(0).size.y, window + 2.0 * extension), "릴 창 높이 = 3칸 + 위아래 덤")
+	_check(not (main.get_node("Reels/Reel1/TopShade") as ColorRect).visible, "멈춰 있을 땐 덤 가림막이 꺼짐")
+	for i: int in 3:
+		_check(main.reel_view(i).is_consistent(), "처음 화면 릴%d의 심볼이 스트립 순서와 같음" % (i + 1))
 
 
 func _test_paytable(main: Control) -> void:
@@ -113,9 +153,13 @@ func _test_keyboard(main: Control) -> void:
 	_check(_box(main, "NoticeBox").value_text().contains("BET 8 이상이면 피버 적립"), "BET 8 미만이면 피버 안내")
 	var before: int = GameState.credit
 	_press(main, KEY_SPACE)
-	_check(GameState.credit != before or GameState.last_win == 0, "스페이스 = START (크레딧 변화)")
+	_check(GameState.spinning and GameState.credit == before - 1, "스페이스 = START (정산 전에는 베팅만 차감)")
+	_settle(main)
+	_check(not GameState.spinning, "스페이스 스핀이 정산까지 끝남")
 	_check(main.grid_matches_logic(), "스페이스 스핀 후 화면=로직")
 	_press(main, KEY_ENTER)
+	_check(GameState.spinning, "엔터 = START")
+	_settle(main)
 	_check(main.grid_matches_logic(), "엔터 스핀 후 화면=로직")
 
 
@@ -131,7 +175,11 @@ func _test_spins(main: Control) -> void:
 		while GameState.bet != FULL_BET:
 			GameState.raise_bet()
 		var result: SpinResult = main.do_spin()
-		if result == null or not main.grid_matches_logic():
+		if result == null:
+			mismatches += 1
+			continue
+		_run_spin(main, i % INPUT_MODES)
+		if not main.grid_matches_logic():
 			mismatches += 1
 			continue
 		if not _hud_matches(main, overlay, result):
@@ -143,6 +191,11 @@ func _test_spins(main: Control) -> void:
 	_check(mismatches == 0, "화면 칸=로직 결과 (불일치 %d회)" % mismatches)
 	_check(hud_errors == 0, "CREDIT/WIN/BET/POOL/피버/당첨 선 표시=로직 (불일치 %d회)" % hud_errors)
 	_check(wins_seen > 0, "당첨 사례가 한 번 이상 나옴")
+	_check(_final_errors == 0, "릴 정지 위치 == 로직 stops (어긋난 횟수 %d)" % _final_errors)
+	_check(_strip_errors == 0, "회전 중 모든 프레임에서 보이는 심볼이 실제 릴 스트립 순서와 같음 (어긋난 프레임 %d)" % _strip_errors)
+	_check(_early_reveal == 0, "정산 전에는 CREDIT·WIN·POOL·피버가 먼저 바뀌지 않음 (어긋난 프레임 %d)" % _early_reveal)
+	_check(_lock_errors == 0, "회전 중 COIN·BET·MAX BET·CANCEL 잠금, STOP 버튼 상태 (어긋난 횟수 %d)" % _lock_errors)
+	_check(_stuck_spins == 0, "모든 스핀이 제한 시간 안에 끝남 (%d)" % _stuck_spins)
 	# 크레딧이 모자라 베팅이 내려간 상황의 안내 문구
 	GameState.credit = 8
 	while GameState.bet != FULL_BET:
@@ -151,6 +204,7 @@ func _test_spins(main: Control) -> void:
 		GameState.credit = 8
 		GameState.bet = FULL_BET
 		var lost: SpinResult = main.do_spin()
+		_settle(main)
 		if lost != null and GameState.credit < FULL_BET:
 			lowered_notice_seen = _box(main, "NoticeBox").value_text().contains("낮췄습니다")
 			break
@@ -196,3 +250,265 @@ func _test_labels_follow_bet(main: Control) -> void:
 		GameState.raise_bet()
 	_check(overlay.label_text(0) == "A 2", "BET 9: A 2")
 	_check(overlay.label_text(7) == "H 1" and not overlay.label_is_dim(7), "BET 9: H 1 밝음")
+
+
+# ---------------------------------------------------------------- 시간 진행 도우미
+
+## 입력 없이 자동 정지·정산까지 시간을 흘린다.
+func _settle(main: Control) -> void:
+	var time: float = 0.0
+	while GameState.spinning and time < MAX_SPIN_SEC:
+		main.advance(FRAME_DT)
+		time += FRAME_DT
+	if GameState.spinning:
+		_stuck_spins += 1
+
+
+func _frame_dt() -> float:
+	return SPIKE_DT if _rng.randf() < SPIKE_CHANCE else _rng.randf_range(0.004, 0.034)
+
+
+## 입력 계획: 모드마다 STOP·START를 무작위 시각·순서로 누른다.
+## 0 = 입력 없음(자동 정지), 1 = STOP 3개를 무작위 순서·시각에 키보드로, 2 = 회전 중 START,
+## 3 = 일부는 버튼 클릭, 일부는 키, 가끔 START를 섞음
+func _make_plan(mode: int) -> Array[Dictionary]:
+	var plan: Array[Dictionary] = []
+	var reels: Array[int] = [0, 1, 2]
+	reels.shuffle()
+	if mode == 1:
+		for reel: int in reels:
+			plan.append({ "time": _rng.randf_range(0.0, 2.5), "kind": "key", "reel": reel, "done": false })
+	elif mode == 2:
+		plan.append({ "time": _rng.randf_range(0.0, 2.0), "kind": "start", "reel": -1, "done": false })
+	elif mode == 3:
+		for reel: int in reels:
+			if _rng.randf() < 0.6:
+				var kind: String = "key" if _rng.randf() < 0.5 else "button"
+				plan.append({ "time": _rng.randf_range(0.0, 3.5), "kind": kind, "reel": reel, "done": false })
+		if _rng.randf() < 0.5:
+			plan.append({ "time": _rng.randf_range(0.0, 3.5), "kind": "start", "reel": -1, "done": false })
+	return plan
+
+
+func _do_input(main: Control, entry: Dictionary) -> void:
+	entry["done"] = true
+	var reel: int = entry["reel"]
+	if entry["kind"] == "key":
+		_press(main, (KEY_1 + reel) as Key)
+	elif entry["kind"] == "button":
+		(main.get_node("StopButton%d" % (reel + 1)) as Button).pressed.emit()
+	elif entry["kind"] == "start":
+		_press(main, KEY_SPACE)
+
+
+## 이미 START된 스핀 하나를 끝까지 굴린다. 매 프레임 검사:
+## 보이는 심볼이 실제 스트립과 같은가, 정산 전에 숫자가 먼저 바뀌지 않았는가, 회전 중 잠금이 지켜지는가.
+func _run_spin(main: Control, mode: int) -> void:
+	var credit_text: String = _box(main, "CreditBox").value_text()
+	var pool_text: String = _box(main, "PoolBox").value_text()
+	var fever_text: String = _box(main, "FeverBox").value_text()
+	var plan: Array[Dictionary] = _make_plan(mode)
+	var stops: PackedInt32Array = PackedInt32Array()
+	for i: int in 3:
+		stops.append(main.reel_view(i).motion.target)
+	var time: float = 0.0
+	var lock_checked: bool = false
+	while GameState.spinning and time < MAX_SPIN_SEC:
+		for entry: Dictionary in plan:
+			if not entry["done"] and time >= float(entry["time"]):
+				_do_input(main, entry)
+		var dt: float = _frame_dt()
+		main.advance(dt)
+		time += dt
+		for i: int in 3:
+			if not main.reel_view(i).is_consistent():
+				_strip_errors += 1
+		if GameState.spinning:
+			if _box(main, "CreditBox").value_text() != credit_text or _box(main, "WinBox").value_text() != "0" \
+					or _box(main, "PoolBox").value_text() != pool_text or _box(main, "FeverBox").value_text() != fever_text:
+				_early_reveal += 1
+			if not lock_checked and time >= LOCK_CHECK_SEC:
+				lock_checked = true
+				_check_lock(main)
+	if GameState.spinning:
+		_stuck_spins += 1
+		return
+	for i: int in 3:
+		var motion: ReelMotion = main.reel_view(i).motion
+		if motion.position != float(stops[i]) or motion.is_spinning():
+			_final_errors += 1
+
+
+## 회전 중 COIN·BET·MAX BET·CANCEL이 아무것도 바꾸지 못하고 버튼이 잠겨 있는지
+func _check_lock(main: Control) -> void:
+	var credit: int = GameState.credit
+	var bet: int = GameState.bet
+	var lines: PackedInt32Array = GameState.line_bets.duplicate()
+	_press(main, KEY_C)
+	_press(main, KEY_B)
+	_press(main, KEY_M)
+	_press(main, KEY_X)
+	if GameState.credit != credit or GameState.bet != bet or GameState.line_bets != lines:
+		_lock_errors += 1
+	for node_name: String in ["BetButton", "MaxBetButton", "CancelButton"]:
+		if not (main.get_node(node_name) as Button).disabled:
+			_lock_errors += 1
+
+
+# ---------------------------------------------------------------- STOP 흐름 (장면 하나씩)
+
+## 정산 전 상태, STOP 버튼 활성/비활성, 회전 중 START 동작, 정산 후 복귀
+func _test_stop_flow(main: Control) -> void:
+	GameState.credit = 100
+	while GameState.bet != FULL_BET:
+		GameState.raise_bet()
+	GameState.refresh()
+	var credit_before: int = GameState.credit
+	var result: SpinResult = main.do_spin()
+	_check(result != null and GameState.spinning, "START: 결과 확정, 회전 시작")
+	_check(GameState.credit == credit_before - FULL_BET, "START 직후 크레딧은 베팅만큼만 차감")
+	_check((main.get_node("Reels/Reel1/TopShade") as ColorRect).visible, "회전 중엔 덤 가림막이 켜짐")
+	var stop_enabled: bool = true
+	for i: int in 3:
+		stop_enabled = stop_enabled and not (main.get_node("StopButton%d" % (i + 1)) as Button).disabled
+	_check(stop_enabled, "회전 중 STOP 1·2·3 활성")
+	_check(not (main.get_node("StartButton") as Button).disabled, "회전 중 START(남은 릴 정지) 활성")
+	_check(_box(main, "NoticeBox").value_text().contains("STOP"), "회전 중 안내 문구에 STOP 안내")
+	_check(main.do_spin() == null and GameState.spinning, "회전 중 START는 새 스핀을 시작하지 않음")
+	for step: int in 40:
+		main.advance(FRAME_DT)
+	_check(main.press_stop(1), "릴2 STOP 수락")
+	_check(not main.press_stop(1), "같은 릴 STOP을 또 눌러도 무시")
+	_check((main.get_node("StopButton2") as Button).disabled, "누른 릴의 STOP 버튼은 비활성")
+	_check(not (main.get_node("StopButton1") as Button).disabled, "안 누른 릴의 STOP 버튼은 활성")
+	_press(main, KEY_SPACE)
+	_settle(main)
+	_check(not GameState.spinning, "회전 중 START 후 정산까지 끝남")
+	_check(main.grid_matches_logic(), "회전 중 START 후 화면 == 로직")
+	var all_stop_disabled: bool = true
+	for i: int in 3:
+		all_stop_disabled = all_stop_disabled and (main.get_node("StopButton%d" % (i + 1)) as Button).disabled
+	_check(all_stop_disabled, "정산 후 STOP 버튼 모두 비활성")
+	_check(_box(main, "WinBox").value_text() == str(result.total_payout()), "정산 후 WIN 표시")
+	_check(not (main.get_node("Reels/Reel1/TopShade") as ColorRect).visible, "정지 후 덤 가림막이 꺼짐")
+	_check(not (main.get_node("BetButton") as Button).disabled or GameState.credit < 1, "정산 후 BET 버튼 복귀")
+
+
+# ---------------------------------------------------------------- feel.json 실행 중 재로딩
+
+const FEEL_TEMP_PATH: String = "user://feel_test.json"
+const RELOAD_SEED: int = 777
+const RELOAD_SPINS: int = 3
+const RELOAD_STOP_AT_SEC: float = 0.5
+
+
+## 손맛 설정 사전을 파일로 쓴다 (기본값에 overrides를 덮어씀)
+func _write_feel_file(path: String, overrides: Dictionary, raw_text: String = "") -> void:
+	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	if raw_text.is_empty():
+		var values: Dictionary = {}
+		for key: String in FeelConfig.SPECS:
+			values[key] = FeelConfig.SPECS[key][0]
+		values.merge(overrides, true)
+		file.store_string(JSON.stringify(values))
+	else:
+		file.store_string(raw_text)
+	file.close()
+
+
+## 정해진 입력(릴1 STOP을 0.5초에 누름, 나머지는 자동)으로 스핀 한 번을 돌리고
+## { stops: 릴별 정지 위치, times: 릴별 멈춘 시각, feel: 이 스핀이 쓴 설정 } 을 돌려준다.
+## on_frame(시간)은 매 프레임 불리며 테스트가 중간에 개입할 때 쓴다.
+func _scripted_spin(main: Control, on_frame: Callable) -> Dictionary:
+	for i: int in 3:
+		main.reel_view(i).motion.position = 0.0
+		main.reel_view(i).refresh()
+	var result: SpinResult = main.do_spin()
+	var times: Array[float] = [-1.0, -1.0, -1.0]
+	var time: float = 0.0
+	var pressed: bool = false
+	var guard: int = 0
+	while GameState.spinning and guard < 6000:
+		if not pressed and time >= RELOAD_STOP_AT_SEC:
+			pressed = true
+			main.press_stop(0)
+		on_frame.call(time)
+		main.advance(FRAME_DT)
+		time += FRAME_DT
+		guard += 1
+		for i: int in 3:
+			if times[i] < 0.0 and not main.reel_view(i).motion.is_spinning():
+				times[i] = time
+	return { "stops": result.stops, "times": times, "feel": main.feel() }
+
+
+func _prepare_reload_run(main: Control) -> void:
+	GameState.initialize(GameState.get_balance(), GameState.load_economy(), RELOAD_SEED)
+	GameState.credit = 5000
+	while GameState.bet != FULL_BET:
+		GameState.raise_bet()
+	GameState.refresh()
+
+
+func _test_feel_reload(main: Control) -> void:
+	# --- 1) 파일 읽기: 정상 / 깨진 파일 / 범위 밖 값 / 감시
+	_write_feel_file(FEEL_TEMP_PATH, { "spin_speed": 40.0, "auto_stop_start": 1.0 })
+	main.set_feel_path(FEEL_TEMP_PATH)
+	var before: FeelConfig = main.pending_feel()
+	_check(not main.poll_feel_file(), "파일이 그대로면 감시가 다시 읽지 않음")
+	_check(main.reload_feel() and main.pending_feel().spin_speed == 40.0 and main.pending_feel() != before, "reload_feel: 새 값을 대기 설정으로 보관")
+	_check(main.feel() != main.pending_feel(), "다시 읽어도 지금 스핀 설정은 그대로 (다음 START부터 적용)")
+	var good: FeelConfig = main.pending_feel()
+	_write_feel_file(FEEL_TEMP_PATH, {}, "{ \"spin_speed\": 3")
+	_check(not main.reload_feel() and main.pending_feel() == good, "깨진 파일이면 이전 설정 유지")
+	_write_feel_file(FEEL_TEMP_PATH, { "spin_speed": 9999.0 })
+	_check(main.reload_feel() and main.pending_feel().spin_speed == FeelConfig.SPECS["spin_speed"][0] and not main.pending_feel().errors.is_empty(), "범위 밖 항목은 기본값으로 대체하고 문제로 기록")
+	_check(_box(main, "NoticeBox").value_text().contains("다음 스핀부터"), "다시 읽으면 안내 문구로 알림")
+	main.set("_feel_mtime", -1)
+	_check(main.poll_feel_file(), "수정 시각이 바뀌면 감시가 다시 읽음")
+	var key_before: FeelConfig = main.pending_feel()
+	_press(main, KEY_F6)
+	_check(main.pending_feel() != key_before, "F6 = 즉시 다시 읽기")
+
+	# --- 2) 진행 중 스핀 불변: 같은 시드로 두 번 돌려 비교
+	_write_feel_file(FEEL_TEMP_PATH, {})
+	main.reload_feel()
+	_prepare_reload_run(main)
+	var control_feel: FeelConfig = main.pending_feel()
+	var control: Array[Dictionary] = []
+	for n: int in RELOAD_SPINS:
+		control.append(_scripted_spin(main, func(_t: float) -> void: pass))
+	# 두 번째 실행: 첫 스핀 0.3초에 설정을 크게 바꿔 다시 읽는다 (회전 속도·자동 정지·튕김 모두 변경)
+	_prepare_reload_run(main)
+	var changed: Dictionary = { "spin_speed": 60.0, "auto_stop_start": 1.0, "auto_stop_interval": 0.1, "slide_cells": 1.0, "bounce_cells": 0.0, "accel_time": 0.0 }
+	var tested: Array[Dictionary] = []
+	for n: int in RELOAD_SPINS:
+		var hook: Callable = func(_t: float) -> void: pass
+		if n == 0:
+			var state: Array[bool] = [false]
+			hook = func(t: float) -> void:
+				if not state[0] and t >= 0.3:
+					state[0] = true
+					_write_feel_file(FEEL_TEMP_PATH, changed)
+					main.reload_feel()
+		tested.append(_scripted_spin(main, hook))
+	var results_same: bool = true
+	for n: int in RELOAD_SPINS:
+		results_same = results_same and control[n]["stops"] == tested[n]["stops"]
+	_check(results_same, "설정을 중간에 바꿔도 스핀 결과(정지 위치) 순서가 그대로")
+	_check(tested[0]["feel"] == control_feel and tested[0]["feel"].spin_speed != 60.0, "진행 중이던 첫 스핀은 옛 설정으로 끝까지 진행")
+	_check(tested[0]["times"] == control[0]["times"], "진행 중이던 첫 스핀의 릴별 정지 시각이 설정을 안 바꾼 경우와 완전히 같음")
+	_check(tested[1]["feel"].spin_speed == 60.0, "다음 스핀부터 새 설정 적용")
+	_check(tested[1]["times"] != control[1]["times"], "다음 스핀의 연출 타이밍은 새 설정대로 달라짐")
+	var auto_ok: bool = true
+	# 릴1은 스크립트가 0.5초에 손으로 멈추므로 자동 정지인 릴2·3만 본다
+	for i: int in [1, 2]:
+		auto_ok = auto_ok and tested[2]["times"][i] >= 1.0 + i * 0.1 and tested[2]["times"][i] < control[2]["times"][i]
+	_check(auto_ok, "새 설정(자동 정지 1.0초 + 0.1초 간격, 더 빠른 속도)이 다음 스핀에 반영됨")
+
+	# --- 정리: 원래 파일을 다시 감시하고 설정을 되돌림
+	main.set_feel_path(FeelConfig.DEFAULT_PATH)
+	main.reload_feel()
+	_prepare_reload_run(main)
+	_scripted_spin(main, func(_t: float) -> void: pass)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(FEEL_TEMP_PATH))

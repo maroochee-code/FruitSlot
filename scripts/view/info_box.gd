@@ -15,7 +15,7 @@ const BOTTOM_PAD: float = 2.0
 var _value: Label = Label.new()
 
 
-func _init(box_name: String, title: String, rect: Rect2, value_font_size: int, align: HorizontalAlignment, wrap: bool = false, center_vertical: bool = true) -> void:
+func _init(box_name: String, title: String, rect: Rect2, value_font_size: int, align: HorizontalAlignment, wrap_text: bool = false, center_vertical: bool = true) -> void:
 	name = box_name
 	position = rect.position
 	size = rect.size
@@ -38,7 +38,7 @@ func _init(box_name: String, title: String, rect: Rect2, value_font_size: int, a
 	_value.size = Vector2(rect.size.x - PAD * 2.0, rect.size.y - top - BOTTOM_PAD)
 	_value.horizontal_alignment = align
 	_value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER if center_vertical else VERTICAL_ALIGNMENT_TOP
-	_value.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if wrap else TextServer.AUTOWRAP_OFF
+	_value.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if wrap_text else TextServer.AUTOWRAP_OFF
 	_value.add_theme_font_size_override("font_size", value_font_size)
 	_value.add_theme_color_override("font_color", VALUE_COLOR)
 	add_child(_value)

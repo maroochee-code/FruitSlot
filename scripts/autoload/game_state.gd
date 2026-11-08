@@ -13,7 +13,9 @@ signal credit_changed(credit: int)
 signal bet_changed(total_bet: int, line_bets: PackedInt32Array)
 signal win_changed(win: int)
 signal coin_inserted(amount: int)
-## 스핀 결과 확정. lowered_from은 베팅이 자동으로 낮아졌을 때의 직전 베팅(아니면 0)
+## 스핀 시작. 결과(정지 위치)는 이 순간 확정됐고, 크레딧에서 베팅만 차감된 상태다.
+signal spin_started(result: SpinResult)
+## 정산 완료(릴이 모두 멈춘 뒤). lowered_from은 베팅이 자동으로 낮아졌을 때의 직전 베팅(아니면 0)
 signal spin_finished(result: SpinResult, lowered_from: int)
 ## 동작이 거절됨. reason은 REASON_* 중 하나
 signal action_rejected(reason: StringName)
@@ -25,9 +27,13 @@ var line_bets: PackedInt32Array = PackedInt32Array()
 var last_win: int = 0
 var coin_amount: int = 0
 var ready_ok: bool = false
+## 릴이 도는 중(START ~ 정산 전). 이 동안 COIN/BET/MAX BET/CANCEL/START는 거절된다.
+var spinning: bool = false
 
 var _data: BalanceData
 var _logic: SlotLogic
+## START에서 확정됐지만 아직 정산하지 않은 결과
+var _pending: SpinResult
 
 
 func _ready() -> void:
@@ -64,6 +70,8 @@ func initialize(data: BalanceData, economy: Dictionary, rng_seed: int) -> void:
 	bet = 0
 	line_bets = _logic.distribute_bet(0)
 	last_win = 0
+	spinning = false
+	_pending = null
 	ready_ok = true
 
 
@@ -88,7 +96,7 @@ func get_fever_counts() -> Dictionary[String, int]:
 
 ## BET 버튼이 의미 있는지 (크레딧이 있고, 올릴 수 있거나 최대에서 1로 돌아갈 수 있음)
 func can_raise_bet() -> bool:
-	if credit < 1:
+	if spinning or credit < 1:
 		return false
 	return bet >= _data.max_total_bet or bet + 1 <= credit
 
@@ -100,18 +108,20 @@ func max_bet_target() -> int:
 
 ## MAX BET이 의미 있는지 (크레딧이 있고, 이미 목표값이 아님)
 func can_max_bet() -> bool:
-	return credit >= 1 and bet != max_bet_target()
+	return not spinning and credit >= 1 and bet != max_bet_target()
 
 
 func can_cancel_bet() -> bool:
-	return bet >= 1
+	return not spinning and bet >= 1
 
 
 func can_start() -> bool:
-	return bet >= 1 and bet <= credit
+	return not spinning and bet >= 1 and bet <= credit
 
 
 func insert_coin() -> void:
+	if spinning:
+		return
 	credit += coin_amount
 	coin_inserted.emit(coin_amount)
 	credit_changed.emit(credit)
@@ -119,6 +129,8 @@ func insert_coin() -> void:
 
 ## BET +1. 최대에서 한 번 더 누르면 1로 돌아간다. 새 베팅이 크레딧을 넘으면 거절한다.
 func raise_bet() -> bool:
+	if spinning:
+		return false
 	if credit < 1:
 		action_rejected.emit(REASON_NO_CREDIT)
 		return false
@@ -134,6 +146,8 @@ func raise_bet() -> bool:
 
 ## MAX BET. 베팅을 min(최대 베팅, 현재 크레딧)으로 한 번에 맞춘다. 라인 배분은 BET과 같다.
 func max_bet() -> bool:
+	if spinning:
+		return false
 	if credit < 1:
 		action_rejected.emit(REASON_NO_CREDIT)
 		return false
@@ -146,14 +160,17 @@ func max_bet() -> bool:
 
 ## CANCEL. 베팅을 0으로 되돌린다. 크레딧은 START 때 차감되므로 변하지 않는다.
 func cancel_bet() -> bool:
-	if bet < 1:
+	if spinning or bet < 1:
 		return false
 	_set_bet(0)
 	return true
 
 
-## START. 크레딧에서 베팅을 차감하고 스핀한 뒤 당첨금을 더한다. 거절되면 null.
+## START 1단계. 크레딧에서 베팅을 차감하고 결과를 확정한다. 당첨금은 아직 더하지 않는다.
+## 화면은 spin_started를 받아 릴을 돌리고, 모두 멈추면 settle_spin()을 부른다. 거절되면 null.
 func start_spin() -> SpinResult:
+	if spinning:
+		return null
 	if bet < 1:
 		action_rejected.emit(REASON_NO_CREDIT if credit < 1 else REASON_NO_BET)
 		return null
@@ -168,12 +185,34 @@ func start_spin() -> SpinResult:
 		credit += bet
 		credit_changed.emit(credit)
 		return null
+	_pending = result
+	spinning = true
+	spin_started.emit(result)
+	return result
+
+
+## START 2단계(정산). 릴이 모두 멈춘 뒤 부른다. 당첨금 합산, WIN 갱신, 베팅 자동 하향.
+## 스핀 중이 아니면 null.
+func settle_spin() -> SpinResult:
+	if not spinning or _pending == null:
+		return null
+	var result: SpinResult = _pending
+	_pending = null
+	spinning = false
 	credit += result.total_payout()
 	credit_changed.emit(credit)
 	_set_win(result.total_payout())
 	var lowered_from: int = _lower_bet_to_credit()
 	spin_finished.emit(result, lowered_from)
 	return result
+
+
+## 시작과 정산을 한 번에 한다 (릴 연출 없이 즉시 결과가 필요한 테스트용).
+func play_spin() -> SpinResult:
+	var result: SpinResult = start_spin()
+	if result == null:
+		return null
+	return settle_spin()
 
 
 ## 크레딧이 베팅보다 적으면 베팅을 크레딧만큼 낮춘다. 낮췄으면 직전 베팅, 아니면 0.

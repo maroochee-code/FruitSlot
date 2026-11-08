@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## 0.4.0 — 2026-11-09 (4단계: 릴 회전과 STOP)
+
+### 추가
+- 릴 회전: 심볼이 balance.json 릴 스트립 순서대로 아래로 흐름 (랜덤 심볼 없음). 릴 창 위아래로 반 칸씩 더 보이고, 회전 중에는 어두운 막으로 덤 부분을 가림 (`scripts/view/reel_view.gd`)
+- 릴 움직임 계산 `ReelMotion`: 가속 → 일정 속도 → 감속 미끄러짐 → 튕김 → 정확히 목표 위치에 정지 (`scripts/view/reel_motion.gd`)
+- 스핀 진행 관리 `SpinController`: STOP 1/2/3, 자동 정지(START 기준 3.0초 + 0.4초 간격, 왼쪽부터), 회전 중 START = 남은 릴을 왼쪽부터 차례로 정지 (`scripts/view/spin_controller.gd`)
+- STOP 1/2/3 버튼과 키 1/2/3: 회전 중이고 아직 누르지 않은 릴만 활성
+- 손맛 설정 `data/feel.json` + 읽기/검사 `FeelConfig`: 회전 속도, 가속, 감속 거리·곡선, 튕김, 반 칸 노출, 자동 정지 시각·간격, 회전 중 START 간격·잠금, 정산 지연. 설명은 `docs/feel.md`
+- 회전 중 COIN·BET·MAX BET·CANCEL 잠금 (버튼 비활성 + 키 무시 + GameState에서도 거절)
+- `GameState`: `spin_started` 신호, `settle_spin()`(정산), `play_spin()`(시작+정산 한 번에, 테스트용), `spinning` 상태
+- `scenes/test/reel_test.tscn`: 릴 움직임·컨트롤러 검사 35개
+- **feel.json 실행 중 재로딩**: 파일 저장 시 0.5초 안에 자동으로(수정 시각 감시), F6으로 즉시 다시 읽음. 적용은 다음 스핀부터이고, 진행 중인 스핀은 시작 때의 설정 한 벌로 끝까지 진행(`ReelMotion.start`·`SpinController.begin`이 설정을 받음). 파일이 깨졌으면 이전 값 유지, 범위 밖 항목은 기본값 + 안내 문구. `half_row`만 재시작 필요
+
+### 변경
+- START가 둘로 나뉨: START 순간에는 베팅 차감 + 결과 확정만, 당첨금 합산·WIN·POOL·피버 갱신·당첨 연출은 세 릴이 멈추고 `result_delay` 뒤에
+- 칸 높이 88 → 78, 릴 위치 y 60 → 55 (위아래 반 칸이 STOP 버튼을 덮지 않도록)
+- 처음 화면의 릴은 빈 박스 대신 스트립 0번 위치의 심볼을 보여줌
+- 화면 갱신(POOL·피버)은 로직 현재값이 아니라 스핀 결과의 스냅샷(`pool_after`, `fever_counts_after`)을 사용
+- `state_test`: `start_spin()` → `play_spin()` 호출로 바꾸고, 시작/정산 분리·회전 중 잠금 검사 6개 추가
+- `view_test`: 시간을 직접 흘리는 방식으로 개편. 300회 스핀을 STOP 키/버튼/자동/회전 중 START 4가지 입력으로 돌리며 매 프레임 검사
+
+### 수정
+- `info_box.gd`, `paytable_panel.gd`: 내장 함수와 이름이 같은 변수(`wrap`, `mini`) 경고 제거 (이름만 변경)
+
 ## 0.3.0 — 2026-11-08 (3단계: 베팅·라인 UI)
 
 ### 추가
