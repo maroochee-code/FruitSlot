@@ -15,6 +15,7 @@
 	"fever_overlay_sec": 2.0,
 	"fever_step_gap": 0.3,
 	"fever_skip_lock_sec": 0.4,
+	"pool_overlay_sec": 3.0,
 	"pool_yellow_from": 1000,
 	"pool_red_from": 1500
 }

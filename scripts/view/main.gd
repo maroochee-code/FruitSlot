@@ -390,18 +390,26 @@ func _settle_now() -> void:
 func _start_fever_show() -> void:
 	_fever_counts_shown = _last_result.fever_counts_after.duplicate()
 	for step: Dictionary in _fever_steps:
-		_fever_counts_shown[step["symbol"]] = 0
+		if step["kind"] == FeverOverlay.KIND_FEVER:
+			_fever_counts_shown[step["symbol"]] = 0
 	_fever_panel.set_counts(_fever_counts_shown)
 	_notice_override = ""
 	# 이번 스핀이 쓰는 설정(_feel)으로 재생 → 연출 도중 feel.json을 바꿔도 이번 연출은 그대로
-	_fever_overlay.play(_fever_steps, _feel.fever_overlay_sec, _feel.fever_step_gap, _feel.fever_skip_lock_sec)
+	_fever_overlay.play(_fever_steps, _feel.fever_overlay_sec, _feel.fever_step_gap, _feel.fever_skip_lock_sec, _feel.pool_overlay_sec)
 	_refresh_buttons()
 	_refresh_notice()
 
 
 ## 피버 단계 하나가 끝나면 그 심볼의 카운터를 초기값(스핀 결과의 스냅샷)으로 되돌려 보여 준다.
+## 풀 획득 단계가 끝나면 POOL 숫자를 스핀 후 값(초기값)으로 되돌려 보여 준다. 크레딧·WIN은 아직 그대로다.
 func _on_fever_step_finished(index: int) -> void:
-	var symbol: String = _fever_steps[index]["symbol"]
+	var step: Dictionary = _fever_steps[index]
+	if step["kind"] == FeverOverlay.KIND_POOL:
+		_pool_shown = _last_result.pool_after
+		_pool_box.set_value(str(_pool_shown))
+		_refresh_pool_color()
+		return
+	var symbol: String = step["symbol"]
 	_fever_counts_shown[symbol] = _last_result.fever_counts_after[symbol]
 	_fever_panel.set_counts(_fever_counts_shown)
 

@@ -3,7 +3,7 @@ extends Control
 ## 피버 발동 연출: 화면 전체를 덮는 오버레이. 단계(step)를 차례로 보여 준다.
 ## 한 단계 = 심볼 하나의 "FEVER! / 심볼 이름 / BONUS +금액". 단계 사이에는 빈 간격이 있다.
 ## 이 클래스는 보여주기만 한다. 금액·순서는 확정된 SpinResult에서 그대로 받고, 건너뛰어도 숫자는 달라지지 않는다.
-## 5-C에서 풀 획득 단계(kind = KIND_POOL)가 같은 목록 끝에 붙는다.
+## 세븐 피버로 풀을 획득했으면 풀 획득 단계(kind = KIND_POOL)가 목록 맨 끝에 붙는다. 단계마다 보여 주는 시간이 다를 수 있다.
 
 signal step_started(index: int)
 signal step_finished(index: int)
@@ -16,6 +16,10 @@ const KIND_POOL: StringName = &"pool"
 const SCREEN_SIZE: Vector2 = Vector2(640, 480)
 const DIM_COLOR: Color = Color(0.0, 0.0, 0.05, 0.88)
 const TITLE_TEXT: String = "FEVER!"
+const POOL_TITLE_TEXT: String = "POOL GET!"
+const POOL_NAME_TEXT: String = "POOL"
+const POOL_BANNER_BG: Color = Color("FFB040")
+const POOL_BANNER_FG: Color = Color("2A1800")
 const TITLE_Y: float = 70.0
 const TITLE_FONT_SIZE: int = 80
 const TITLE_COLOR_A: Color = Color("FFD700")
@@ -35,7 +39,11 @@ const HINT_Y: float = 440.0
 
 var _steps: Array[Dictionary] = []
 var _step_sec: float = 0.0
+var _pool_sec: float = 0.0
 var _gap_sec: float = 0.0
+## 단계별 시작·끝 시각(초). play()에서 한 번 계산한다.
+var _starts: PackedFloat64Array = PackedFloat64Array()
+var _ends: PackedFloat64Array = PackedFloat64Array()
 var _skip_lock_sec: float = 0.0
 var _elapsed: float = 0.0
 var _playing: bool = false
@@ -96,25 +104,49 @@ static func build_steps(result: SpinResult, data: BalanceData) -> Array[Dictiona
 				"name": data.symbol_names.get(symbol, symbol),
 				"bonus": result.fever_bonuses[symbol],
 			})
-	# 5-C: 세븐 피버로 풀을 획득했으면 여기에 KIND_POOL 단계를 붙인다 (result.pool_won). 지금은 자리만 비워 둔다.
+	# 세븐 피버로 풀을 획득했으면 맨 끝에 풀 획득 단계를 붙인다 (금액은 결과의 pool_won 그대로)
+	if result.pool_won > 0:
+		steps.append({
+			"kind": KIND_POOL,
+			"symbol": "",
+			"name": POOL_NAME_TEXT,
+			"bonus": result.pool_won,
+		})
 	return steps
 
 
-## 한 단계가 차지하는 시간의 합 (단계 사이 간격 포함, 마지막 뒤 간격 없음)
-static func total_seconds(steps_total: int, step_sec: float, gap_sec: float) -> float:
-	if steps_total <= 0:
+## 단계 하나가 보이는 시간. 풀 획득 단계는 pool_sec, 피버 단계는 step_sec.
+static func step_duration(step: Dictionary, step_sec: float, pool_sec: float) -> float:
+	return pool_sec if step["kind"] == KIND_POOL else step_sec
+
+
+## 모든 단계가 차지하는 시간의 합 (단계 사이 간격 포함, 마지막 뒤 간격 없음)
+static func total_seconds(steps: Array[Dictionary], step_sec: float, gap_sec: float, pool_sec: float) -> float:
+	if steps.is_empty():
 		return 0.0
-	return steps_total * step_sec + (steps_total - 1) * gap_sec
+	var total: float = (steps.size() - 1) * gap_sec
+	for step: Dictionary in steps:
+		total += step_duration(step, step_sec, pool_sec)
+	return total
 
 
 ## 연출 시작. 시간 값은 이번 스핀의 손맛 설정에서 받는다 (연출 중에는 바뀌지 않는다).
-func play(steps: Array[Dictionary], step_sec: float, gap_sec: float, skip_lock_sec: float) -> void:
+func play(steps: Array[Dictionary], step_sec: float, gap_sec: float, skip_lock_sec: float, pool_sec: float) -> void:
 	if steps.is_empty():
 		return
 	_steps = steps
 	_step_sec = step_sec
+	_pool_sec = pool_sec
 	_gap_sec = gap_sec
 	_skip_lock_sec = skip_lock_sec
+	_starts.clear()
+	_ends.clear()
+	var at: float = 0.0
+	for step: Dictionary in _steps:
+		_starts.append(at)
+		at += step_duration(step, _step_sec, _pool_sec)
+		_ends.append(at)
+		at += _gap_sec
 	_elapsed = 0.0
 	_started_count = 0
 	_finished_count = 0
@@ -129,6 +161,11 @@ func is_playing() -> bool:
 
 func step_count() -> int:
 	return _steps.size()
+
+
+## 단계 index의 내용 (kind / symbol / name / bonus). 테스트에서 화면이 받은 값을 읽을 때 쓴다.
+func step_at(index: int) -> Dictionary:
+	return _steps[index]
 
 
 ## 지금 단계 내용이 화면에 보이는 중인가 (단계 사이 간격에서는 false)
@@ -166,7 +203,7 @@ func skip() -> bool:
 
 
 func _update() -> void:
-	var total: float = total_seconds(_steps.size(), _step_sec, _gap_sec)
+	var total: float = _ends[_ends.size() - 1]
 	var index: int = _step_index_at(_elapsed)
 	# 지나간 단계의 시작·끝을 빠짐없이 알린다 (프레임이 튀어도 순서대로)
 	while _started_count < _steps.size() and _started_count <= _passed_index():
@@ -200,36 +237,36 @@ func _finish(skipped: bool) -> void:
 
 ## 시각 t에 보여야 할 단계 번호. 간격이거나 범위 밖이면 -1.
 func _step_index_at(t: float) -> int:
-	var stride: float = _step_sec + _gap_sec
-	if stride <= 0.0 or _steps.is_empty():
-		return -1
-	var index: int = int(t / stride)
-	if index >= _steps.size():
-		return -1
-	return index if t - index * stride < _step_sec else -1
+	for i: int in _starts.size():
+		if t >= _starts[i] and t < _ends[i]:
+			return i
+	return -1
 
 
 ## 지금 시각까지 시작된 마지막 단계 번호 (간격 중이면 직전 단계)
 func _passed_index() -> int:
-	var stride: float = _step_sec + _gap_sec
-	if stride <= 0.0:
-		return _steps.size() - 1
-	return mini(int(_elapsed / stride), _steps.size() - 1)
+	var passed: int = -1
+	for i: int in _starts.size():
+		if _starts[i] <= _elapsed:
+			passed = i
+	return passed
 
 
 func _step_end(index: int) -> float:
-	return index * (_step_sec + _gap_sec) + _step_sec
+	return _ends[index]
 
 
 func _apply_step(index: int) -> void:
 	var step: Dictionary = _steps[index]
-	var style: Dictionary = SymbolStyle.get_style(step["symbol"])
+	var is_pool: bool = step["kind"] == KIND_POOL
+	var style: Dictionary = { "bg": POOL_BANNER_BG, "fg": POOL_BANNER_FG } if is_pool else SymbolStyle.get_style(step["symbol"])
 	_banner_box.bg_color = style["bg"]
 	_banner_box.border_color = Color("FFD700")
 	_banner_box.set_border_width_all(3)
+	_title.text = POOL_TITLE_TEXT if is_pool else TITLE_TEXT
 	_name.text = step["name"]
 	_name.add_theme_color_override("font_color", style["fg"])
-	_bonus.text = "BONUS +%d" % step["bonus"]
+	_bonus.text = ("POOL +%d" if is_pool else "BONUS +%d") % step["bonus"]
 	_counter.text = "%d / %d" % [index + 1, _steps.size()] if _steps.size() > 1 else ""
 
 

@@ -642,6 +642,7 @@ func _test_feel_reload(main: Control) -> void:
 
 const FEVER_SEED: int = 4242
 const FEVER_SEARCH_MAX: int = 6000
+const POOL_SEARCH_MAX: int = 60000
 const FEVER_START_CREDIT: int = 100000
 
 
@@ -661,6 +662,15 @@ func _find_fever_spin(data: BalanceData, min_triggers: int) -> int:
 	for n: int in FEVER_SEARCH_MAX:
 		var result: SpinResult = probe.spin(FULL_BET)
 		if result.fever_triggers.size() >= min_triggers:
+			return n
+	return -1
+
+
+## 같은 시드로 풀을 획득하는(세븐 피버 + 풀) 스핀 번호를 찾는다. 없으면 -1.
+func _find_pool_spin(data: BalanceData) -> int:
+	var probe: SlotLogic = SlotLogic.new(data, FEVER_SEED)
+	for n: int in POOL_SEARCH_MAX:
+		if probe.spin(FULL_BET).pool_won > 0:
 			return n
 	return -1
 
@@ -705,6 +715,13 @@ func _test_fever_show() -> void:
 	var single_n: int = _find_fever_spin(data, 1)
 	var single: Dictionary = await _fever_natural_run(data, single_n)
 	_check(single["steps"] == 1, "피버 1개인 스핀은 단계 1개")
+	# 세븐 피버 + 풀 획득: 마지막에 POOL GET 단계가 붙는다
+	var pool_n: int = _find_pool_spin(data)
+	_check(pool_n >= 0, "시험용 데이터에서 풀을 획득하는 스핀을 찾음 (n=%d)" % pool_n)
+	if pool_n >= 0:
+		var pool_run: Dictionary = await _fever_natural_run(data, pool_n)
+		_check(pool_run["steps"] >= 2, "풀 획득 스핀은 세븐 피버 단계 + POOL 단계 (단계 %d개)" % pool_run["steps"])
+		await _fever_skip_run(data, pool_n, pool_run)
 	# 시험이 끝나면 원래 밸런스로 되돌린다.
 	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
 
@@ -719,7 +736,16 @@ func _fever_natural_run(data: BalanceData, n: int) -> Dictionary:
 	for symbol: String in data.fever_symbols:
 		if result.fever_triggers.has(symbol):
 			expected.append(symbol)
-	var step_total: int = expected.size()
+	var pool_step: bool = result.pool_won > 0
+	var step_total: int = expected.size() + (1 if pool_step else 0)
+	# 풀 단계가 끝나는 순간(정산 직전)의 POOL·CREDIT·WIN 글자를 기록한다 (main의 처리가 먼저 실행된 뒤 불린다)
+	var pool_probe: Dictionary = { "pool": "", "credit": "", "win": "" }
+	var pool_before: String = _box(main, "PoolBox").value_text()
+	overlay.step_finished.connect(func(index: int) -> void:
+		if overlay.step_at(index)["kind"] == FeverOverlay.KIND_POOL:
+			pool_probe["pool"] = _box(main, "PoolBox").value_text()
+			pool_probe["credit"] = _box(main, "CreditBox").value_text()
+			pool_probe["win"] = _box(main, "WinBox").value_text())
 	_check(_advance_to_fever(main), "피버가 나온 스핀: 릴이 멈추면 오버레이 재생 (단계 %d개)" % step_total)
 	_check(overlay.step_count() == step_total and step_total >= 1, "단계 수 = 발동한 피버 수")
 	_check(GameState.spinning and GameState.credit == credit_start - FULL_BET, "오버레이 중: 정산 전이라 크레딧은 베팅만 차감된 상태")
@@ -735,7 +761,7 @@ func _fever_natural_run(data: BalanceData, n: int) -> Dictionary:
 		zero_ok = zero_ok and rows[i] == "%s ×%d" % [data.symbol_names[symbol], want]
 	_check(zero_ok, "오버레이 시작: 발동한 심볼의 카운터는 0, 나머지는 스핀 후 값")
 	var feel: FeelConfig = main.feel()
-	var total: float = FeverOverlay.total_seconds(step_total, feel.fever_overlay_sec, feel.fever_step_gap)
+	var total: float = FeverOverlay.total_seconds(FeverOverlay.build_steps(result, data), feel.fever_overlay_sec, feel.fever_step_gap, feel.pool_overlay_sec)
 	var frames: int = 0
 	var text_errors: int = 0
 	var counter_errors: int = 0
@@ -751,9 +777,13 @@ func _fever_natural_run(data: BalanceData, n: int) -> Dictionary:
 			if order_seen.is_empty() or order_seen[order_seen.size() - 1] != step:
 				order_seen.append(step)
 			var texts: Dictionary = overlay.shown_texts()
-			var step_symbol: String = expected[step]
-			if texts["title"] != "FEVER!" or texts["name"] != data.symbol_names[step_symbol] or texts["bonus"] != "BONUS +%d" % result.fever_bonuses[step_symbol]:
-				text_errors += 1
+			if step >= expected.size():
+				if texts["title"] != "POOL GET!" or texts["name"] != "POOL" or texts["bonus"] != "POOL +%d" % result.pool_won:
+					text_errors += 1
+			else:
+				var step_symbol: String = expected[step]
+				if texts["title"] != "FEVER!" or texts["name"] != data.symbol_names[step_symbol] or texts["bonus"] != "BONUS +%d" % result.fever_bonuses[step_symbol]:
+					text_errors += 1
 		else:
 			gap_seen = true
 		# 카운터: 끝난 단계의 심볼은 초기값, 아직인 단계는 0
@@ -780,7 +810,7 @@ func _fever_natural_run(data: BalanceData, n: int) -> Dictionary:
 	var want_order: Array[int] = []
 	for i: int in step_total:
 		want_order.append(i)
-	_check(order_seen == want_order, "단계가 체리·포도·벨·세븐(피버 대상 순서)대로 차례로 나옴: %s" % [order_seen])
+	_check(order_seen == want_order, "단계가 체리·포도·벨·세븐(피버 대상 순서) → 풀 획득 순으로 차례로 나옴: %s" % [order_seen])
 	_check(text_errors == 0, "단계마다 'FEVER!' / 심볼 이름 / 'BONUS +금액'이 결과와 같음 (어긋난 프레임 %d)" % text_errors)
 	_check(counter_errors == 0, "카운터: 단계가 끝날 때마다 해당 심볼만 0에서 초기값으로 (어긋난 프레임 %d)" % counter_errors)
 	_check(lock_errors == 0, "오버레이 중 COIN·BET·MAX BET·CANCEL·STOP 잠금 (어긋난 횟수 %d)" % lock_errors)
@@ -790,6 +820,11 @@ func _fever_natural_run(data: BalanceData, n: int) -> Dictionary:
 	_check(main.pending_feel().fever_overlay_sec == 9.0, "도중에 다시 읽은 새 설정은 다음 스핀용으로 보관됨")
 	_check(not GameState.spinning and not overlay.visible, "연출이 끝나면 정산되고 오버레이가 사라짐")
 	var snapshot: Dictionary = _fever_snapshot(main)
+	if pool_step:
+		_check(result.pool_won >= int(pool_before), "획득 금액(%d)은 획득 전 POOL 표시(%s) 이상 (그 사이 적립분 포함)" % [result.pool_won, pool_before])
+		_check(pool_probe["pool"] == str(result.pool_after) and result.pool_after == data.pool_initial, "POOL GET 단계가 끝나면 POOL이 초기값(%d)으로 돌아감" % data.pool_initial)
+		_check(pool_probe["credit"] == str(credit_start - FULL_BET) and pool_probe["win"] == "0", "POOL GET 단계가 끝난 순간에도 CREDIT·WIN은 아직 안 바뀜 (정산은 연출이 모두 끝난 뒤 한 번에)")
+		_check(result.pool_won >= data.pool_initial and snapshot["notice"].contains("풀 %d" % result.pool_won), "안내 문구의 풀 금액 = 연출에서 보여 준 풀 금액 (%d)" % result.pool_won)
 	_check(GameState.credit == credit_start - FULL_BET + result.total_payout(), "정산: 크레딧 = 시작 - 베팅 + 총 지급")
 	_check(snapshot["win"] == str(result.total_payout()), "정산: WIN = 총 지급 (한 번에 갱신)")
 	_check(snapshot["notice"].contains("당첨 %d = 라인 %d + 피버 %d + 풀 %d" % [result.total_payout(), result.line_payout, result.fever_bonus, result.pool_won]), "연출이 끝난 뒤 안내 문구에 '라인 X + 피버 Y + 풀 Z' 내역")
