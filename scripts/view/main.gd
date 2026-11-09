@@ -80,6 +80,12 @@ var _win_box: InfoBox
 var _bet_box: InfoBox
 var _pool_box: InfoBox
 var _fever_panel: FeverPanel
+var _fever_overlay: FeverOverlay
+## 지금 연출 중인 피버 단계 목록과, 그동안 카운터 패널에 보여 주는 숫자 (피버 심볼은 0에서 시작해 단계가 끝나면 초기값)
+var _fever_steps: Array[Dictionary] = []
+var _fever_counts_shown: Dictionary[String, int] = {}
+## 이번 스핀의 당첨 선을 이미 켰는지 (피버 연출 전에 먼저 켠다)
+var _wins_shown: bool = false
 ## 깜빡임 시계(초)와 지금 켜짐인지
 var _blink_time: float = 0.0
 var _blink_on: bool = false
@@ -167,6 +173,8 @@ func advance(delta: float) -> void:
 		_spin.advance(delta)
 		for reel: ReelView in _reels:
 			reel.refresh()
+	if _fever_overlay.is_playing():
+		_fever_overlay.advance(delta)
 	if _settling:
 		_settle_left -= delta
 		if _settle_left <= 0.0:
@@ -203,6 +211,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## START. 멈춰 있으면 크레딧 차감 + 결과 확정(GameState), 릴이 돌고 있으면 남은 릴을 차례로 정지시킨다.
 ## 새 스핀이 시작됐을 때만 결과를 돌려준다.
 func do_spin() -> SpinResult:
+	# 피버 연출 중 START(스페이스)는 연출 건너뛰기. 숫자는 연출이 끝날 때 똑같이 반영된다.
+	if _fever_overlay.is_playing():
+		_fever_overlay.skip()
+		return null
 	if GameState.spinning:
 		if _spin.press_quick_stop():
 			_refresh_buttons()
@@ -334,6 +346,7 @@ func _on_action_rejected(reason: StringName) -> void:
 func _on_spin_started(result: SpinResult) -> void:
 	_last_result = result
 	_overlay.clear_wins()
+	_wins_shown = false
 	_notice_override = ""
 	_settling = false
 	# 새 손맛 설정은 여기서만 받아들인다. 이 스핀은 끝까지 이 설정 한 벌로 움직인다.
@@ -361,14 +374,52 @@ func _on_all_stopped() -> void:
 		_settle_now()
 
 
+## 릴이 멈추고 result_delay가 지난 시점. 당첨 선을 먼저 켜고, 피버가 있으면 오버레이 연출을 한 뒤에 정산한다.
+## 피버가 없으면 곧바로 정산한다. 정산(크레딧·WIN·POOL·카운터 반영)은 항상 한 번, 연출이 끝난 뒤에만 일어난다.
 func _settle_now() -> void:
 	_settling = false
+	_overlay.show_wins(_last_result.line_wins)
+	_wins_shown = true
+	_fever_steps = FeverOverlay.build_steps(_last_result, _data)
+	if _fever_steps.is_empty():
+		GameState.settle_spin()
+		return
+	_start_fever_show()
+
+
+func _start_fever_show() -> void:
+	_fever_counts_shown = _last_result.fever_counts_after.duplicate()
+	for step: Dictionary in _fever_steps:
+		_fever_counts_shown[step["symbol"]] = 0
+	_fever_panel.set_counts(_fever_counts_shown)
+	_notice_override = ""
+	# 이번 스핀이 쓰는 설정(_feel)으로 재생 → 연출 도중 feel.json을 바꿔도 이번 연출은 그대로
+	_fever_overlay.play(_fever_steps, _feel.fever_overlay_sec, _feel.fever_step_gap, _feel.fever_skip_lock_sec)
+	_refresh_buttons()
+	_refresh_notice()
+
+
+## 피버 단계 하나가 끝나면 그 심볼의 카운터를 초기값(스핀 결과의 스냅샷)으로 되돌려 보여 준다.
+func _on_fever_step_finished(index: int) -> void:
+	var symbol: String = _fever_steps[index]["symbol"]
+	_fever_counts_shown[symbol] = _last_result.fever_counts_after[symbol]
+	_fever_panel.set_counts(_fever_counts_shown)
+
+
+func _on_fever_finished(_skipped: bool) -> void:
 	GameState.settle_spin()
+
+
+## 피버 연출이 재생 중인가 (테스트용)
+func fever_playing() -> bool:
+	return _fever_overlay.is_playing()
 
 
 func _on_spin_finished(result: SpinResult, lowered_from: int) -> void:
 	_last_result = result
-	_overlay.show_wins(result.line_wins)
+	if not _wins_shown:
+		_overlay.show_wins(result.line_wins)
+		_wins_shown = true
 	_refresh_side_panel(result.pool_after, result.fever_counts_after)
 	_notice_override = _build_result_notice(result, lowered_from)
 	_debug.show_result(result, _data, grid_matches_logic(), GameState.credit)
@@ -390,6 +441,8 @@ func _refresh_notice() -> void:
 	var lines: PackedStringArray = PackedStringArray()
 	if not _notice_override.is_empty():
 		lines.append(_notice_override)
+	elif _fever_overlay.is_playing():
+		lines.append("피버 발동! 스페이스로 연출을 건너뛸 수 있습니다.")
 	elif GameState.spinning:
 		lines.append("STOP 1·2·3 또는 START로 릴을 멈추세요.")
 	elif GameState.credit < 1:
@@ -406,7 +459,8 @@ func _refresh_buttons() -> void:
 	_max_bet_button.disabled = not GameState.can_max_bet()
 	_cancel_button.disabled = not GameState.can_cancel_bet()
 	# 회전 중에는 START가 "남은 릴 차례로 정지" 역할을 하므로 정지시킬 릴이 남아 있으면 켠다.
-	_start_button.disabled = not (GameState.can_start() or _spin.can_quick_stop())
+	# 피버 연출 중에는 START(스페이스)가 "연출 건너뛰기"라서 켠다.
+	_start_button.disabled = not (GameState.can_start() or _spin.can_quick_stop() or _fever_overlay.is_playing())
 	for i: int in _stop_buttons.size():
 		_stop_buttons[i].disabled = not _spin.can_stop(i)
 
@@ -562,3 +616,8 @@ func _build_debug() -> void:
 	_debug.clip_contents = true
 	_debug.visible = _debug_visible
 	add_child(_debug)
+	# 피버 오버레이는 가장 위(디버그 창보다도 위)에 둔다
+	_fever_overlay = FeverOverlay.new()
+	add_child(_fever_overlay)
+	_fever_overlay.step_finished.connect(_on_fever_step_finished)
+	_fever_overlay.finished.connect(_on_fever_finished)

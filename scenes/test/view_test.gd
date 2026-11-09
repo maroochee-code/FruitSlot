@@ -27,6 +27,8 @@ var _stuck_spins: int = 0
 var _window_errors: int = 0
 var _window_moves: int = 0
 var _delay_errors: int = 0
+## 300회 스핀 중 피버 연출이 재생된 프레임 수 (일반 스핀 흐름에서도 정산이 연출 뒤로 밀리는지 확인용)
+var _fever_frames: int = 0
 
 
 func _ready() -> void:
@@ -50,6 +52,9 @@ func _ready() -> void:
 	_test_labels_follow_bet(main)
 	_test_stop_flow(main)
 	_test_feel_reload(main)
+	main.free()
+	await get_tree().process_frame
+	await _test_fever_show()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -421,8 +426,13 @@ func _run_spin(main: Control, mode: int, stops: PackedInt32Array) -> void:
 			_window_moves += 1
 		if GameState.spinning:
 			if _box(main, "CreditBox").value_text() != credit_text or _box(main, "WinBox").value_text() != "0" \
-					or _box(main, "PoolBox").value_text() != pool_text or _fever(main).value_text() != fever_text:
+					or _box(main, "PoolBox").value_text() != pool_text:
 				_early_reveal += 1
+			# 피버 카운터는 피버 연출 중에만 (발동한 심볼 0 → 초기값) 먼저 바뀐다. 그 밖에는 정산 전에 불변.
+			if not main.fever_playing() and _fever(main).value_text() != fever_text:
+				_early_reveal += 1
+			if main.fever_playing():
+				_fever_frames += 1
 			if not lock_checked and time >= LOCK_CHECK_SEC:
 				lock_checked = true
 				_check_lock(main)
@@ -626,3 +636,228 @@ func _test_feel_reload(main: Control) -> void:
 	_prepare_reload_run(main)
 	_scripted_spin(main, func(_t: float) -> void: pass)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(FEEL_TEMP_PATH))
+
+
+# ---------------------------------------------------------------- 피버 발동 연출 (5-B)
+
+const FEVER_SEED: int = 4242
+const FEVER_SEARCH_MAX: int = 6000
+const FEVER_START_CREDIT: int = 100000
+
+
+## 피버 대상 초기값을 모두 1로 낮춘 밸런스 (테스트 전용. 파일은 건드리지 않음). 첫 당첨 심볼이 바로 피버가 된다.
+func _fever_test_data() -> BalanceData:
+	var json: JSON = JSON.new()
+	json.parse(FileAccess.get_file_as_string("res://data/balance.json"))
+	var raw: Dictionary = json.data
+	for target: Variant in raw["fever"]["targets"]:
+		(target as Dictionary)["initial_count"] = 1
+	return BalanceData.from_dict(raw)
+
+
+## 같은 시드로 n번째(0부터) 스핀이 피버 min_triggers개 이상인 n을 찾는다. 없으면 -1.
+func _find_fever_spin(data: BalanceData, min_triggers: int) -> int:
+	var probe: SlotLogic = SlotLogic.new(data, FEVER_SEED)
+	for n: int in FEVER_SEARCH_MAX:
+		var result: SpinResult = probe.spin(FULL_BET)
+		if result.fever_triggers.size() >= min_triggers:
+			return n
+	return -1
+
+
+## 시드·n으로 상태를 맞추고 n번째 스핀 직전의 화면(main)을 돌려준다.
+func _fever_world(data: BalanceData, n: int) -> Control:
+	GameState.initialize(data, GameState.load_economy(), FEVER_SEED)
+	GameState.credit = FEVER_START_CREDIT
+	while GameState.bet != FULL_BET:
+		GameState.raise_bet()
+	for i: int in n:
+		GameState.play_spin()
+	var main: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	add_child(main)
+	main.set_process(false)
+	await get_tree().process_frame
+	GameState.refresh()
+	return main
+
+
+## START 후 피버 연출이 시작될 때까지 시간을 흘린다. 시작했으면 true.
+func _advance_to_fever(main: Control) -> bool:
+	var guard: int = 0
+	while GameState.spinning and not main.fever_playing() and guard < 6000:
+		main.advance(FRAME_DT)
+		guard += 1
+	return main.fever_playing()
+
+
+func _fever_rows(main: Control) -> PackedStringArray:
+	return _fever(main).value_text().split("\n")
+
+
+func _test_fever_show() -> void:
+	var data: BalanceData = _fever_test_data()
+	var multi_n: int = _find_fever_spin(data, 2)
+	_check(multi_n >= 0, "시험용 데이터에서 피버가 한 스핀에 둘 이상 나오는 스핀을 찾음 (n=%d)" % multi_n)
+	if multi_n < 0:
+		return
+	var snapshot: Dictionary = await _fever_natural_run(data, multi_n)
+	await _fever_skip_run(data, multi_n, snapshot)
+	var single_n: int = _find_fever_spin(data, 1)
+	var single: Dictionary = await _fever_natural_run(data, single_n)
+	_check(single["steps"] == 1, "피버 1개인 스핀은 단계 1개")
+	# 시험이 끝나면 원래 밸런스로 되돌린다.
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+
+
+## 끝까지 자연 재생: 순서·글자·카운터·잠금·시간·정산 시점을 매 프레임 확인하고 최종 화면 숫자를 돌려준다.
+func _fever_natural_run(data: BalanceData, n: int) -> Dictionary:
+	var main: Control = await _fever_world(data, n)
+	var overlay: FeverOverlay = main.get_node("FeverOverlay")
+	var credit_start: int = GameState.credit
+	var result: SpinResult = main.do_spin()
+	var expected: Array[String] = []
+	for symbol: String in data.fever_symbols:
+		if result.fever_triggers.has(symbol):
+			expected.append(symbol)
+	var step_total: int = expected.size()
+	_check(_advance_to_fever(main), "피버가 나온 스핀: 릴이 멈추면 오버레이 재생 (단계 %d개)" % step_total)
+	_check(overlay.step_count() == step_total and step_total >= 1, "단계 수 = 발동한 피버 수")
+	_check(GameState.spinning and GameState.credit == credit_start - FULL_BET, "오버레이 중: 정산 전이라 크레딧은 베팅만 차감된 상태")
+	_check(_box(main, "WinBox").value_text() == "0", "오버레이 중: WIN은 아직 0")
+	_check(_box(main, "NoticeBox").value_text().contains("건너뛸 수"), "오버레이 중 안내 문구: 건너뛰기 안내")
+	_check(not _box(main, "NoticeBox").value_text().contains("라인 "), "오버레이 중: '라인 X + 피버 Y + 풀 Z' 내역은 아직 안 보임")
+	_check(not (main.get_node("StartButton") as Button).disabled, "오버레이 중 START(건너뛰기) 켜짐")
+	var rows: PackedStringArray = _fever_rows(main)
+	var zero_ok: bool = true
+	for i: int in data.fever_symbols.size():
+		var symbol: String = data.fever_symbols[i]
+		var want: int = 0 if expected.has(symbol) else result.fever_counts_after[symbol]
+		zero_ok = zero_ok and rows[i] == "%s ×%d" % [data.symbol_names[symbol], want]
+	_check(zero_ok, "오버레이 시작: 발동한 심볼의 카운터는 0, 나머지는 스핀 후 값")
+	var feel: FeelConfig = main.feel()
+	var total: float = FeverOverlay.total_seconds(step_total, feel.fever_overlay_sec, feel.fever_step_gap)
+	var frames: int = 0
+	var text_errors: int = 0
+	var counter_errors: int = 0
+	var order_seen: Array[int] = []
+	var lock_errors: int = 0
+	var gap_seen: bool = step_total < 2
+	var early_skip_ignored: bool = false
+	var reloaded: bool = false
+	main.set_feel_path(FEEL_TEMP_PATH)
+	while main.fever_playing() and frames < 6000:
+		var step: int = overlay.current_step()
+		if step >= 0:
+			if order_seen.is_empty() or order_seen[order_seen.size() - 1] != step:
+				order_seen.append(step)
+			var texts: Dictionary = overlay.shown_texts()
+			var step_symbol: String = expected[step]
+			if texts["title"] != "FEVER!" or texts["name"] != data.symbol_names[step_symbol] or texts["bonus"] != "BONUS +%d" % result.fever_bonuses[step_symbol]:
+				text_errors += 1
+		else:
+			gap_seen = true
+		# 카운터: 끝난 단계의 심볼은 초기값, 아직인 단계는 0
+		var shown: PackedStringArray = _fever_rows(main)
+		for i: int in data.fever_symbols.size():
+			var sym: String = data.fever_symbols[i]
+			var idx: int = expected.find(sym)
+			var done: bool = idx >= 0 and overlay.elapsed() >= idx * (feel.fever_overlay_sec + feel.fever_step_gap) + feel.fever_overlay_sec
+			var want_count: int = result.fever_counts_after[sym] if (idx < 0 or done) else 0
+			if shown[i] != "%s ×%d" % [data.symbol_names[sym], want_count]:
+				counter_errors += 1
+		if frames == 5:
+			lock_errors += _fever_lock_errors(main, credit_start - FULL_BET)
+			# 건너뛰기 잠금 시간 안의 스페이스는 무시
+			_press(main, KEY_SPACE)
+			early_skip_ignored = main.fever_playing()
+		if frames == 10 and not reloaded:
+			reloaded = true
+			_write_feel_file(FEEL_TEMP_PATH, { "fever_overlay_sec": 9.0, "fever_step_gap": 3.0 })
+			main.reload_feel()
+		main.advance(FRAME_DT)
+		frames += 1
+	var played: float = frames * FRAME_DT
+	var want_order: Array[int] = []
+	for i: int in step_total:
+		want_order.append(i)
+	_check(order_seen == want_order, "단계가 체리·포도·벨·세븐(피버 대상 순서)대로 차례로 나옴: %s" % [order_seen])
+	_check(text_errors == 0, "단계마다 'FEVER!' / 심볼 이름 / 'BONUS +금액'이 결과와 같음 (어긋난 프레임 %d)" % text_errors)
+	_check(counter_errors == 0, "카운터: 단계가 끝날 때마다 해당 심볼만 0에서 초기값으로 (어긋난 프레임 %d)" % counter_errors)
+	_check(lock_errors == 0, "오버레이 중 COIN·BET·MAX BET·CANCEL·STOP 잠금 (어긋난 횟수 %d)" % lock_errors)
+	_check(gap_seen, "단계 사이 빈 간격이 있음")
+	_check(early_skip_ignored, "오버레이가 뜬 직후 스페이스는 무시 (건너뛰기 잠금)")
+	_check(absf(played - total) <= FRAME_DT + 0.001, "재생 시간 = 단계 수×시간 + 간격 (%.3f초, 기대 %.3f초) — 도중에 feel.json을 바꿔도 불변" % [played, total])
+	_check(main.pending_feel().fever_overlay_sec == 9.0, "도중에 다시 읽은 새 설정은 다음 스핀용으로 보관됨")
+	_check(not GameState.spinning and not overlay.visible, "연출이 끝나면 정산되고 오버레이가 사라짐")
+	var snapshot: Dictionary = _fever_snapshot(main)
+	_check(GameState.credit == credit_start - FULL_BET + result.total_payout(), "정산: 크레딧 = 시작 - 베팅 + 총 지급")
+	_check(snapshot["win"] == str(result.total_payout()), "정산: WIN = 총 지급 (한 번에 갱신)")
+	_check(snapshot["notice"].contains("당첨 %d = 라인 %d + 피버 %d + 풀 %d" % [result.total_payout(), result.line_payout, result.fever_bonus, result.pool_won]), "연출이 끝난 뒤 안내 문구에 '라인 X + 피버 Y + 풀 Z' 내역")
+	var final_ok: bool = true
+	for i: int in data.fever_symbols.size():
+		var sym2: String = data.fever_symbols[i]
+		final_ok = final_ok and _fever_rows(main)[i] == "%s ×%d" % [data.symbol_names[sym2], result.fever_counts_after[sym2]]
+	_check(final_ok and result.fever_counts_after[expected[0]] == data.fever_initial_counts[expected[0]], "끝난 뒤 카운터 = 초기값으로 리셋된 스핀 후 값")
+	_check(snapshot["pool"] == str(result.pool_after), "정산: POOL = 스핀 후 값")
+	main.set_feel_path(FeelConfig.DEFAULT_PATH)
+	snapshot["steps"] = step_total
+	main.free()
+	await get_tree().process_frame
+	return snapshot
+
+
+## 같은 시드·같은 스핀을 다시 돌리되 연출을 스페이스로 건너뛴다. 최종 숫자가 자연 재생과 완전히 같아야 한다.
+func _fever_skip_run(data: BalanceData, n: int, natural: Dictionary) -> void:
+	var main: Control = await _fever_world(data, n)
+	var overlay: FeverOverlay = main.get_node("FeverOverlay")
+	main.do_spin()
+	_advance_to_fever(main)
+	main.advance(0.1)
+	_press(main, KEY_SPACE)
+	_check(main.fever_playing(), "건너뛰기 잠금 시간 안의 스페이스는 무시")
+	_check(main.do_spin() == null and main.fever_playing(), "잠금 시간 안의 START도 무시")
+	main.advance(0.5)
+	_check(main.fever_playing(), "건너뛰기 전까지 연출 계속")
+	_press(main, KEY_SPACE)
+	_check(not main.fever_playing() and not GameState.spinning and not overlay.visible, "잠금이 풀린 뒤 스페이스: 연출 즉시 종료 + 정산")
+	var snapshot: Dictionary = _fever_snapshot(main)
+	var same: bool = true
+	for key: String in ["credit", "win", "bet", "pool", "fever", "notice"]:
+		if snapshot[key] != natural[key]:
+			same = false
+			print("  달라진 항목 ", key, ": ", snapshot[key], " / ", natural[key])
+	_check(same, "건너뛰어도 CREDIT·WIN·BET·POOL·피버 카운터·안내 문구가 자연 재생과 완전히 같음")
+	main.free()
+	await get_tree().process_frame
+
+
+func _fever_snapshot(main: Control) -> Dictionary:
+	return {
+		"credit": _box(main, "CreditBox").value_text(),
+		"win": _box(main, "WinBox").value_text(),
+		"bet": _box(main, "BetBox").value_text(),
+		"pool": _box(main, "PoolBox").value_text(),
+		"fever": _fever(main).value_text(),
+		"notice": _box(main, "NoticeBox").value_text(),
+	}
+
+
+## 오버레이 중 COIN·BET·MAX BET·CANCEL·STOP이 아무 것도 바꾸지 못하는지 (어긋난 개수)
+func _fever_lock_errors(main: Control, expected_credit: int) -> int:
+	var errors: int = 0
+	var bet: int = GameState.bet
+	_press(main, KEY_C)
+	_press(main, KEY_B)
+	_press(main, KEY_M)
+	_press(main, KEY_X)
+	if GameState.credit != expected_credit or GameState.bet != bet:
+		errors += 1
+	for i: int in 3:
+		if main.press_stop(i):
+			errors += 1
+		if not (main.get_node("StopButton%d" % (i + 1)) as Button).disabled:
+			errors += 1
+	for node_name: String in ["BetButton", "MaxBetButton", "CancelButton"]:
+		if not (main.get_node(node_name) as Button).disabled:
+			errors += 1
+	return errors

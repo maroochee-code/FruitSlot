@@ -17,6 +17,9 @@ const SPECS: Dictionary = {
 	"quick_stop_interval": [0.15, 0.0, 5.0],
 	"start_lock_sec": [0.3, 0.0, 5.0],
 	"result_delay": [0.25, 0.0, 5.0],
+	"fever_overlay_sec": [2.0, 0.2, 10.0],
+	"fever_step_gap": [0.3, 0.0, 5.0],
+	"fever_skip_lock_sec": [0.4, 0.0, 5.0],
 	"pool_yellow_from": [1000.0, 0.0, 1000000000.0],
 	"pool_red_from": [1500.0, 0.0, 1000000000.0],
 }
@@ -55,6 +58,12 @@ var quick_stop_interval: float = 0.15
 var start_lock_sec: float = 0.3
 ## 마지막 릴이 멈춘 뒤 정산·당첨 연출까지의 간격 (초)
 var result_delay: float = 0.25
+## 피버 오버레이: 심볼 하나를 보여 주는 시간 (초)
+var fever_overlay_sec: float = 2.0
+## 피버 오버레이: 심볼과 심볼 사이 빈 간격 (초)
+var fever_step_gap: float = 0.3
+## 피버 오버레이가 뜬 직후 이 시간 동안은 스페이스 건너뛰기를 무시 (스페이스 연타로 바로 넘어가는 것 방지, 초)
+var fever_skip_lock_sec: float = 0.4
 ## POOL 숫자가 이 값 이상이면 노랑 (미만이면 주황)
 var pool_yellow_from: float = 1000.0
 ## POOL 숫자가 이 값 이상이면 빨강 + 가벼운 깜빡임. pool_yellow_from보다 커야 한다.

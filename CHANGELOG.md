@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 0.6.0 — 2026-11-09 (5-B: 피버 발동 연출)
+
+### 추가
+- `FeverOverlay`(`scripts/view/fever_overlay.gd`): 화면 전체 오버레이. 단계마다 "FEVER!" / 심볼 이름 / "BONUS +금액". 피버가 여럿이면 balance.json 피버 대상 순서(체리, 포도, 벨, 세븐)로 차례 재생. 풀 획득 단계(`KIND_POOL`) 자리는 비워 둠(5-C)
+- 오버레이 중 COIN/BET/MAX BET/CANCEL/STOP 잠금, 스페이스(START)로 연출 건너뛰기 (뜬 직후 잠금 시간 동안은 무시)
+- `feel.json` 새 키: `fever_overlay_sec`(2.0, 0.2~10), `fever_step_gap`(0.3, 0~5), `fever_skip_lock_sec`(0.4, 0~5). 다음 스핀부터 적용, 진행 중 연출 불변
+
+### 변경
+- 정산(`GameState.settle_spin`) 호출 시점을 피버 연출이 끝난 뒤로 미룸. CREDIT·WIN·POOL·카운터·"라인 X + 피버 Y + 풀 Z" 안내는 그때 한 번에 갱신. 피버가 없는 스핀은 전과 같음
+- 카운터: 오버레이가 뜨면 발동한 심볼이 0으로 보이고, 단계가 끝날 때 초기값으로
+- 당첨 선은 정산이 아니라 릴이 멈춘 직후(오버레이 전)에 켬
+- 결과 확정 로직(`scripts/logic/`)·`balance.json` 변경 없음
+
+### 수정
+- `FeverOverlay.total_seconds` 매개변수 이름이 `step_count()`와 겹치던 경고
+
 ## 0.5.0 — 2026-11-09 (5-A: 피버 카운터 패널과 POOL 색 단계)
 
 ### 추가

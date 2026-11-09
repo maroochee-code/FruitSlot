@@ -12,6 +12,9 @@
 	"quick_stop_interval": 0.15,
 	"start_lock_sec": 0.3,
 	"result_delay": 0.25,
+	"fever_overlay_sec": 2.0,
+	"fever_step_gap": 0.3,
+	"fever_skip_lock_sec": 0.4,
 	"pool_yellow_from": 1000,
 	"pool_red_from": 1500
 }
