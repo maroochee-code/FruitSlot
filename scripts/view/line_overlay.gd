@@ -4,11 +4,13 @@ extends Control
 ## 라인의 칸 좌표와 종류는 balance.json(BalanceData.lines)에서 읽는다. 여기 있는 상수는 화면 설정이다.
 
 const VERTICAL: String = "vertical"
-const LABEL_SIZE: Vector2 = Vector2(34, 24)
+const LABEL_SIZE: Vector2 = Vector2(33, 21)
 const LABEL_FONT_SIZE: int = 12
 const LABEL_STACK_GAP: float = 2.0
-const SIDE_GAP: float = 6.0
-const TOP_GAP: float = 4.0
+## 라벨은 보드 바깥에 둔다 (640×480 기준). 왼쪽 x 6~39 / 오른쪽 x 396~429 / 위쪽 y 9~30
+const LABEL_LEFT_X: float = 6.0
+const LABEL_RIGHT_X: float = 396.0
+const LABEL_TOP_Y: float = 9.0
 const DIM_ALPHA: float = 0.25
 const LINE_WIDTH: float = 4.0
 const LINE_EXTEND: float = 20.0
@@ -164,20 +166,15 @@ func _add_to_group(groups: Dictionary, key: String, line_index: int) -> void:
 
 func _place_top_label(line_index: int, line: LineDef) -> void:
 	var rect: Rect2 = _cell_rect(line.cells[0].x, line.cells[0].y)
-	var pos: Vector2 = Vector2(rect.get_center().x - LABEL_SIZE.x / 2.0, rect.position.y - LABEL_SIZE.y - TOP_GAP)
+	var pos: Vector2 = Vector2(rect.get_center().x - LABEL_SIZE.x / 2.0, LABEL_TOP_Y)
 	_add_label(line_index, pos)
 
 
 func _place_side_group(key: String, members: Array) -> void:
 	var is_left: bool = key.begins_with("L")
 	var row: int = int(key.substr(1))
-	var last_col: int = _data.reel_count - 1
 	var row_rect: Rect2 = _cell_rect(0, row)
-	var x: float
-	if is_left:
-		x = _cell_rect(0, 0).position.x - SIDE_GAP - LABEL_SIZE.x
-	else:
-		x = _cell_rect(last_col, 0).end.x + SIDE_GAP
+	var x: float = LABEL_LEFT_X if is_left else LABEL_RIGHT_X
 	var count: int = members.size()
 	var total_height: float = count * LABEL_SIZE.y + (count - 1) * LABEL_STACK_GAP
 	var y: float = row_rect.get_center().y - total_height / 2.0
@@ -191,7 +188,6 @@ func _add_label(line_index: int, pos: Vector2) -> void:
 	var label: Label = Label.new()
 	label.name = "LineLabel_%s_%d" % [_data.lines[line_index].id, _line_labels[line_index].size()]
 	label.position = pos
-	label.size = LABEL_SIZE
 	label.text = "%s 0" % _data.lines[line_index].id
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -201,6 +197,11 @@ func _add_label(line_index: int, pos: Vector2) -> void:
 	box.bg_color = LABEL_BG
 	box.border_color = color
 	box.set_border_width_all(1)
+	# 글자 상자가 33×21보다 커지지 않도록 안쪽 여백은 0 (테두리는 그대로 그린다)
+	box.set_content_margin_all(0)
 	label.add_theme_stylebox_override("normal", box)
+	# 글꼴·여백을 정한 뒤에 크기를 준다 (먼저 주면 기본 글꼴 크기의 최소 크기로 커진다)
+	label.size = LABEL_SIZE
 	add_child(label)
+	label.size = LABEL_SIZE
 	_line_labels[line_index].append(label)

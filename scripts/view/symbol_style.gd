@@ -21,6 +21,12 @@ const ICON_PATHS: Dictionary = {
 	"SEVEN": ICON_DIR + "seven.png",
 }
 
+## 도트 아트 기준 좌표를 화면 좌표로 키우는 배율 (기준 아트 213×160 → 640×480)
+const ART_SCALE: int = 3
+## 칸 바탕 타일 그림. 아트 좌표 36×28, 심볼(32×24)은 칸 안쪽 이 오프셋에 놓는다.
+const TILE_PATH: String = "res://assets/ui/cell_tile.png"
+const SYMBOL_ART_OFFSET: Vector2i = Vector2i(2, 2)
+
 ## 심볼 ID → 표시 정보. 7개 색 쌍 중 가장 가까운 쌍(체리-오렌지)의 색차(Lab ΔE)가 44.6임을 확인함.
 const STYLES: Dictionary = {
 	"CHERRY": { "bg": Color("D81B2C"), "fg": Color("FFFFFF"), "border": BORDER_NORMAL, "text": "체리" },
@@ -37,6 +43,13 @@ static func get_style(symbol_id: String) -> Dictionary:
 	if STYLES.has(symbol_id):
 		return STYLES[symbol_id]
 	return { "bg": UNKNOWN_BG, "fg": Color.BLACK, "border": BORDER_NORMAL, "text": symbol_id }
+
+
+## 칸 바탕 타일 그림. 없으면 null.
+static func load_tile() -> Texture2D:
+	if not ResourceLoader.exists(TILE_PATH):
+		return null
+	return load(TILE_PATH) as Texture2D
 
 
 ## 심볼 그림을 돌려준다. 경로가 없거나 파일이 없으면 null (색 박스 + 글자로 표시).

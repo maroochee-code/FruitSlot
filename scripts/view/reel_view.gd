@@ -8,9 +8,6 @@ extends Control
 ##   아래 칸 = 스트립[base + r + 1] (위 칸 바로 아래에 이어 붙음)
 ## 이다. 멈췄을 때(fraction 0) 위 칸이 창을 꽉 채우고 아래 칸은 창 밖에 있다.
 
-## 창 테두리(고정). 안에서 스크롤하는 심볼의 테두리가 창 가장자리에서 흐르는 것을 덮는다.
-const WINDOW_FRAME_WIDTH: int = 2
-const WINDOW_FRAME_COLOR: Color = Color("3A3A48")
 ## 위치 비교 허용 오차 (픽셀)
 const POSITION_EPS: float = 0.01
 
@@ -38,7 +35,6 @@ func setup(strip: PackedStringArray, reel_motion: ReelMotion, cell_size: Vector2
 		var window: Control = _make_window(r, cell_size, Vector2(0.0, r * (cell_size.y + gap)))
 		_upper.append(_add_symbol_cell(window, "Upper", cell_size))
 		_lower.append(_add_symbol_cell(window, "Lower", cell_size))
-		window.add_child(_make_frame(cell_size))
 		_windows.append(window)
 	refresh()
 
@@ -126,15 +122,3 @@ func _add_symbol_cell(window: Control, cell_name: String, cell_size: Vector2) ->
 	window.add_child(cell)
 	return cell
 
-
-func _make_frame(cell_size: Vector2) -> Panel:
-	var frame: Panel = Panel.new()
-	frame.name = "Frame"
-	frame.size = cell_size
-	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var box: StyleBoxFlat = StyleBoxFlat.new()
-	box.bg_color = Color(0, 0, 0, 0)
-	box.border_color = WINDOW_FRAME_COLOR
-	box.set_border_width_all(WINDOW_FRAME_WIDTH)
-	frame.add_theme_stylebox_override("panel", box)
-	return frame

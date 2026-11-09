@@ -43,6 +43,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	_test_initial_screen(main)
 	_test_layout(main)
+	_test_board_layout(main)
 	_test_paytable(main)
 	_test_fever_panel(main)
 	_test_pool_color(main)
@@ -123,6 +124,54 @@ func _test_layout(main: Control) -> void:
 	for i: int in 3:
 		_check(main.reel_view(i).is_consistent(), "처음 화면 릴%d의 심볼이 스트립 순서와 같음" % (i + 1))
 		_check(main.reel_view(i).windows_are_sound(), "처음 화면 릴%d의 칸 창이 심볼로 빈틈없이 채워짐" % (i + 1))
+
+
+## 6-B: 보드·칸·심볼 그림·STOP·라벨이 목표 배치(640×480)와 정확히 맞는지
+func _test_board_layout(main: Control) -> void:
+	var board: BoardView = main.get_node("Board")
+	_check(board.position == Vector2(42, 36) and board.size == Vector2(348, 276), "보드 외곽 (42,36) 348×276")
+	_check(main.CELL_SIZE == Vector2(108, 84) and main.CELL_GAP == 0.0, "칸 108×84, 칸 사이 간격 없음")
+	var cells_ok: bool = true
+	var art_ok: bool = true
+	for col: int in 3:
+		var reel: ReelView = main.reel_view(col)
+		cells_ok = cells_ok and reel.position == Vector2(54 + 108 * col, 48)
+		for row: int in 3:
+			var window: Control = reel.window_at(row)
+			cells_ok = cells_ok and reel.position + window.position == Vector2(54 + 108 * col, 48 + 84 * row)
+			var cell: SymbolCell = reel.cell_at(row)
+			art_ok = art_ok and cell.tile_rect() == Rect2(0, 0, 108, 84) and cell.symbol_rect() == Rect2(6, 6, 96, 72)
+			art_ok = art_ok and cell.art_visible()
+	_check(cells_ok, "칸 위치 (54+108c, 48+84r)")
+	_check(art_ok, "칸마다 타일 108×84 + 심볼 96×72가 칸 안쪽 (6,6)에 놓임 (정수 3배)")
+	_check(board.bulb_count() == 100, "전구 링 100개")
+	var bulbs_ok: bool = true
+	for i: int in board.bulb_count():
+		var p: Vector2i = board.bulb_art_position(i)
+		bulbs_ok = bulbs_ok and p.x >= 1 and p.y >= 1 and p.x <= 113 and p.y <= 89
+		bulbs_ok = bulbs_ok and (p.x == 1 or p.x == 113 or p.y == 1 or p.y == 89)
+		bulbs_ok = bulbs_ok and board.bulb_is_lit(i) == (i % 2 == 0)
+	_check(bulbs_ok, "전구가 보드 안쪽 테두리 위에만 있고 켜짐/꺼짐이 교대")
+	var stop_ok: bool = true
+	for col: int in 3:
+		var button: Button = main.get_node("StopButton%d" % (col + 1))
+		stop_ok = stop_ok and button.size == Vector2(96, 33) and button.position == Vector2(60 + 108 * col, 318)
+	_check(stop_ok, "STOP 버튼 96×33, y=318, 칸 가운데 정렬")
+	var labels_ok: bool = true
+	var label_count: int = 0
+	for child: Node in main.get_node("LineOverlay").get_children():
+		var label: Label = child as Label
+		if label == null:
+			continue
+		label_count += 1
+		labels_ok = labels_ok and label.size == Vector2(33, 21)
+		var left: bool = is_equal_approx(label.position.x, 6.0)
+		var right: bool = is_equal_approx(label.position.x, 396.0)
+		var top: bool = is_equal_approx(label.position.y, 9.0)
+		labels_ok = labels_ok and (left or right or top)
+		if left or right:
+			labels_ok = labels_ok and label.position.y >= 48.0 and label.position.y + 21.0 <= 300.0
+	_check(label_count > 0 and labels_ok, "라인 라벨 33×21, 보드 바깥 (왼쪽 x=6 / 오른쪽 x=396 / 위쪽 y=9)")
 
 
 func _test_paytable(main: Control) -> void:

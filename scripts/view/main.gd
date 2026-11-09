@@ -5,12 +5,14 @@ extends Control
 # --- 화면 배치 (640×480 기준) ---
 const REEL_COLS: int = 3
 const REEL_ROWS: int = 3
-## 칸 높이 78 (4단계 값 그대로 유지). 릴은 y 55 ~ 301로 STOP 자리(y=340) 위에서 끝난다.
-const CELL_SIZE: Vector2 = Vector2(100, 78)
-const CELL_GAP: float = 4.0
-const REEL_ORIGIN: Vector2 = Vector2(76, 55)
-const STOP_SLOT_Y: float = 340.0
-const STOP_SLOT_SIZE: Vector2 = Vector2(100, 28)
+## 6-B: 아트 좌표(213×160) × 3. 보드 외곽 (42,36) 348×276, 칸 108×84 (간격 없음), 첫 칸 (54,48).
+const BOARD_ORIGIN: Vector2 = Vector2(42, 36)
+const CELL_SIZE: Vector2 = Vector2(108, 84)
+const CELL_GAP: float = 0.0
+const REEL_ORIGIN: Vector2 = Vector2(54, 48)
+## STOP 버튼은 칸 아래(보드 아래끝 312 밑)에서 칸 가운데에 맞춘다.
+const STOP_SLOT_Y: float = 318.0
+const STOP_SLOT_SIZE: Vector2 = Vector2(96, 33)
 const BUTTON_ROW_Y: float = 376.0
 const BUTTON_SIZE: Vector2 = Vector2(76, 32)
 const START_BUTTON_SIZE: Vector2 = Vector2(100, 32)
@@ -108,6 +110,7 @@ func _ready() -> void:
 	_latest_feel = _feel
 	set_feel_path(FeelConfig.DEFAULT_PATH)
 	_build_background()
+	_build_board()
 	_build_reels()
 	_build_overlay()
 	_build_placeholders()
@@ -498,6 +501,13 @@ func _build_background() -> void:
 	add_child(bg)
 
 
+func _build_board() -> void:
+	var board: BoardView = BoardView.new()
+	board.name = "Board"
+	board.position = BOARD_ORIGIN
+	add_child(board)
+
+
 func _build_reels() -> void:
 	var holder: Control = Control.new()
 	holder.name = "Reels"
@@ -535,7 +545,7 @@ func _build_placeholders() -> void:
 ## 릴 아래 STOP 1/2/3 버튼
 func _build_stop_buttons() -> void:
 	for col: int in REEL_COLS:
-		var x: float = REEL_ORIGIN.x + col * (CELL_SIZE.x + CELL_GAP)
+		var x: float = REEL_ORIGIN.x + col * (CELL_SIZE.x + CELL_GAP) + (CELL_SIZE.x - STOP_SLOT_SIZE.x) / 2.0
 		var button: Button = _make_button("StopButton%d" % (col + 1), "STOP %d" % (col + 1), Rect2(Vector2(x, STOP_SLOT_Y), STOP_SLOT_SIZE))
 		button.pressed.connect(press_stop.bind(col))
 		_stop_buttons.append(button)
