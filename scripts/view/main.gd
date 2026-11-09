@@ -13,35 +13,37 @@ const REEL_ORIGIN: Vector2 = Vector2(54, 48)
 ## STOP 버튼은 칸 아래(보드 아래끝 312 밑)에서 칸 가운데에 맞춘다.
 const STOP_SLOT_Y: float = 318.0
 const STOP_SLOT_SIZE: Vector2 = Vector2(96, 33)
-const BUTTON_ROW_Y: float = 376.0
-const BUTTON_SIZE: Vector2 = Vector2(76, 32)
-const START_BUTTON_SIZE: Vector2 = Vector2(100, 32)
-const BUTTON_GAP: float = 4.0
-const BUTTON_FONT_SIZE: int = 13
-const TITLE_RECT: Rect2 = Rect2(468, 8, 168, 48)
-const POOL_RECT: Rect2 = Rect2(468, 62, 168, 48)
-const FEVER_RECT: Rect2 = Rect2(468, 116, 168, 140)
-const PAYTABLE_RECT: Rect2 = Rect2(468, 260, 168, 156)
-## 디버그 창은 화면 오른쪽 절반을 덮는다 (글자가 잘리지 않도록 넓게)
-const DEBUG_RECT: Rect2 = Rect2(300, 4, 336, 412)
-const BOTTOM_Y: float = 420.0
-const BOTTOM_H: float = 56.0
-const CREDIT_RECT: Rect2 = Rect2(4, BOTTOM_Y, 140, BOTTOM_H)
-const NOTICE_RECT: Rect2 = Rect2(148, BOTTOM_Y, 220, BOTTOM_H)
-const WIN_RECT: Rect2 = Rect2(372, BOTTOM_Y, 124, BOTTOM_H)
-const BET_RECT: Rect2 = Rect2(500, BOTTOM_Y, 136, BOTTOM_H)
+## 하단 버튼 줄: 어두운 띠 위에 CANCEL / COIN / START / BET / MAX BET (6-C, 640×480 기준)
+const BUTTON_STRIP_RECT: Rect2 = Rect2(6, 354, 444, 48)
+const BUTTON_STRIP_COLOR: Color = Color("0e1130")
+const BUTTON_Y: float = 360.0
+const BUTTON_SIZE: Vector2 = Vector2(81, 36)
+const BUTTON_XS: Array[float] = [15.0, 102.0, 189.0, 276.0, 363.0]
+## 글자 크기는 갈무리11 원래 크기(12)의 정수배
+const BUTTON_FONT_MULTIPLE: int = 1
+## 오른쪽 패널 (x=450, 폭 180)
+const TITLE_RECT: Rect2 = Rect2(450, 9, 180, 72)
+const POOL_RECT: Rect2 = Rect2(450, 87, 180, 42)
+const FEVER_RECT: Rect2 = Rect2(450, 135, 180, 132)
+const PAYTABLE_RECT: Rect2 = Rect2(450, 273, 180, 138)
+## 디버그 창은 화면 오른쪽 절반을 덮는다 (하단 표시창 y=414 위에서 끝나도록 높이 406)
+const DEBUG_RECT: Rect2 = Rect2(300, 4, 336, 406)
+## 하단 표시창 (y=414, 높이 57)
+const BOTTOM_Y: float = 414.0
+const BOTTOM_H: float = 57.0
+const CREDIT_RECT: Rect2 = Rect2(9, BOTTOM_Y, 150, BOTTOM_H)
+const NOTICE_RECT: Rect2 = Rect2(165, BOTTOM_Y, 264, BOTTOM_H)
+const WIN_RECT: Rect2 = Rect2(435, BOTTOM_Y, 96, BOTTOM_H)
+const BET_RECT: Rect2 = Rect2(537, BOTTOM_Y, 93, BOTTOM_H)
+## 큰 숫자 = 갈무리11(12) ×2 = 24, 안내 글자 = 갈무리11 ×1 = 12
 const BIG_FONT_SIZE: int = 24
-const POOL_FONT_SIZE: int = 22
-const NOTICE_FONT_SIZE: int = 11
-const PLACEHOLDER_BG: Color = Color("1A1A22")
-const PLACEHOLDER_BORDER: Color = Color("3A3A48")
-const PLACEHOLDER_TEXT: Color = Color("6A6A7A")
-const PLACEHOLDER_FONT_SIZE: int = 10
+const POOL_FONT_SIZE: int = 24
+const NOTICE_FONT_SIZE: int = 12
 const BACKGROUND_COLOR: Color = Color("0C0C14")
-const CREDIT_COLOR: Color = Color("7CFF9A")
-const WIN_COLOR: Color = Color("FFD700")
+const CREDIT_COLOR: Color = Color("7dff9a")
+const WIN_COLOR: Color = Color("ffe14d")
 ## POOL 숫자 색 3단계: 주황(기본) → 노랑(pool_yellow_from 이상) → 빨강+깜빡임(pool_red_from 이상). 기준 숫자는 feel.json
-const POOL_COLOR: Color = Color("FFB040")
+const POOL_COLOR: Color = Color("ff9a1f")
 const POOL_COLOR_YELLOW: Color = Color("FFE94A")
 const POOL_COLOR_RED: Color = Color("FF4040")
 const POOL_COLOR_RED_DIM: Color = Color("8A2222")
@@ -52,8 +54,6 @@ const POOL_TIER_RED: int = 2
 const BLINK_PERIOD: float = 0.8
 ## feel.json 수정 시각을 확인하는 간격 (초)
 const FEEL_POLL_SEC: float = 0.5
-## 한글이 깨지지 않도록 시스템 한글 글꼴을 우선 지정
-const FONT_NAMES: PackedStringArray = ["Malgun Gothic", "맑은 고딕", "Noto Sans CJK KR", "Apple SD Gothic Neo", "sans-serif"]
 
 var _data: BalanceData
 ## 지금 도는(또는 마지막으로 돈) 스핀이 쓰는 손맛 설정. 스핀 시작 때만 바뀐다.
@@ -101,7 +101,7 @@ var _start_button: Button
 
 
 func _ready() -> void:
-	_apply_font()
+	_apply_theme()
 	if not GameState.ready_ok:
 		push_error("main: GameState 초기화 실패")
 		return
@@ -113,7 +113,7 @@ func _ready() -> void:
 	_build_board()
 	_build_reels()
 	_build_overlay()
-	_build_placeholders()
+	_build_title_frame()
 	_build_info_boxes()
 	_build_buttons()
 	_build_stop_buttons()
@@ -485,12 +485,9 @@ func _refresh_side_panel(pool: int, counts: Dictionary[String, int]) -> void:
 	_fever_panel.set_counts(counts)
 
 
-func _apply_font() -> void:
-	var font: SystemFont = SystemFont.new()
-	font.font_names = FONT_NAMES
-	var ui_theme: Theme = Theme.new()
-	ui_theme.default_font = font
-	theme = ui_theme
+## 기본 테마: 갈무리 도트 폰트 + 버튼 3상태 그림 (UiSkin)
+func _apply_theme() -> void:
+	theme = UiSkin.make_theme()
 
 
 func _build_background() -> void:
@@ -537,9 +534,14 @@ func _build_overlay() -> void:
 	_overlay.setup(_data, _cells, REEL_ORIGIN, CELL_SIZE, CELL_GAP)
 
 
-## 아직 기능이 없는 자리 (타이틀은 6단계)
-func _build_placeholders() -> void:
-	_add_placeholder("Title", "타이틀", TITLE_RECT)
+## 타이틀 자리: 빈 패널 틀만 (내용은 나중 단계)
+func _build_title_frame() -> void:
+	var frame: Panel = Panel.new()
+	frame.name = "Title"
+	frame.position = TITLE_RECT.position
+	frame.size = TITLE_RECT.size
+	frame.add_theme_stylebox_override("panel", UiSkin.panel_box())
+	add_child(frame)
 
 
 ## 릴 아래 STOP 1/2/3 버튼
@@ -551,24 +553,6 @@ func _build_stop_buttons() -> void:
 		_stop_buttons.append(button)
 
 
-func _add_placeholder(node_name: String, text: String, rect: Rect2) -> void:
-	var panel: Panel = Panel.new()
-	panel.name = node_name
-	panel.position = rect.position
-	panel.size = rect.size
-	var box: StyleBoxFlat = StyleBoxFlat.new()
-	box.bg_color = PLACEHOLDER_BG
-	box.border_color = PLACEHOLDER_BORDER
-	box.set_border_width_all(1)
-	panel.add_theme_stylebox_override("panel", box)
-	var label: Label = Label.new()
-	label.text = text
-	label.add_theme_font_size_override("font_size", PLACEHOLDER_FONT_SIZE)
-	label.add_theme_color_override("font_color", PLACEHOLDER_TEXT)
-	panel.add_child(label)
-	add_child(panel)
-
-
 func _build_info_boxes() -> void:
 	_credit_box = _add_box(InfoBox.new("CreditBox", "CREDIT", CREDIT_RECT, BIG_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
 	_credit_box.set_value_color(CREDIT_COLOR)
@@ -576,7 +560,7 @@ func _build_info_boxes() -> void:
 	_win_box = _add_box(InfoBox.new("WinBox", "WIN", WIN_RECT, BIG_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
 	_win_box.set_value_color(WIN_COLOR)
 	_bet_box = _add_box(InfoBox.new("BetBox", "BET", BET_RECT, BIG_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
-	_pool_box = _add_box(InfoBox.new("PoolBox", "POOL", POOL_RECT, POOL_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT))
+	_pool_box = _add_box(InfoBox.new("PoolBox", "POOL", POOL_RECT, POOL_FONT_SIZE, HORIZONTAL_ALIGNMENT_RIGHT, false, true, true))
 	_pool_box.set_value_color(POOL_COLOR)
 	_fever_panel = FeverPanel.new("FeverBox", FEVER_RECT)
 	add_child(_fever_panel)
@@ -591,26 +575,29 @@ func _add_box(box: InfoBox) -> InfoBox:
 	return box
 
 
-## 버튼 한 줄: CANCEL | COIN | START | BET | MAX BET (릴 가운데 기준으로 가운데 정렬)
+## 버튼 한 줄: CANCEL | COIN | START | BET | MAX BET (어두운 띠 위, 위치는 BUTTON_XS)
 func _build_buttons() -> void:
-	var reels_width: float = REEL_COLS * CELL_SIZE.x + (REEL_COLS - 1) * CELL_GAP
-	var center_x: float = REEL_ORIGIN.x + reels_width / 2.0
-	var row_width: float = BUTTON_SIZE.x * 4.0 + START_BUTTON_SIZE.x + BUTTON_GAP * 4.0
-	var x: float = center_x - row_width / 2.0
-	_cancel_button = _make_button("CancelButton", "CANCEL", Rect2(Vector2(x, BUTTON_ROW_Y), BUTTON_SIZE))
+	var strip: ColorRect = ColorRect.new()
+	strip.name = "ButtonStrip"
+	strip.color = BUTTON_STRIP_COLOR
+	strip.position = BUTTON_STRIP_RECT.position
+	strip.size = BUTTON_STRIP_RECT.size
+	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(strip)
+	_cancel_button = _make_row_button("CancelButton", "CANCEL", 0)
 	_cancel_button.pressed.connect(GameState.cancel_bet)
-	x += BUTTON_SIZE.x + BUTTON_GAP
-	var coin: Button = _make_button("CoinButton", "COIN", Rect2(Vector2(x, BUTTON_ROW_Y), BUTTON_SIZE))
+	var coin: Button = _make_row_button("CoinButton", "COIN", 1)
 	coin.pressed.connect(GameState.insert_coin)
-	x += BUTTON_SIZE.x + BUTTON_GAP
-	_start_button = _make_button("StartButton", "START", Rect2(Vector2(x, BUTTON_ROW_Y), START_BUTTON_SIZE))
+	_start_button = _make_row_button("StartButton", "START", 2)
 	_start_button.pressed.connect(do_spin)
-	x += START_BUTTON_SIZE.x + BUTTON_GAP
-	_bet_button = _make_button("BetButton", "BET", Rect2(Vector2(x, BUTTON_ROW_Y), BUTTON_SIZE))
+	_bet_button = _make_row_button("BetButton", "BET", 3)
 	_bet_button.pressed.connect(GameState.raise_bet)
-	x += BUTTON_SIZE.x + BUTTON_GAP
-	_max_bet_button = _make_button("MaxBetButton", "MAX BET", Rect2(Vector2(x, BUTTON_ROW_Y), BUTTON_SIZE))
+	_max_bet_button = _make_row_button("MaxBetButton", "MAX BET", 4)
 	_max_bet_button.pressed.connect(GameState.max_bet)
+
+
+func _make_row_button(node_name: String, text: String, slot: int) -> Button:
+	return _make_button(node_name, text, Rect2(Vector2(BUTTON_XS[slot], BUTTON_Y), BUTTON_SIZE))
 
 
 func _make_button(node_name: String, text: String, rect: Rect2) -> Button:
@@ -621,7 +608,7 @@ func _make_button(node_name: String, text: String, rect: Rect2) -> Button:
 	button.size = rect.size
 	# 스페이스·엔터가 버튼 클릭으로 한 번 더 처리되지 않게 한다.
 	button.focus_mode = Control.FOCUS_NONE
-	button.add_theme_font_size_override("font_size", BUTTON_FONT_SIZE)
+	UiFont.apply(button, UiFont.Face.BODY, BUTTON_FONT_MULTIPLE)
 	add_child(button)
 	return button
 

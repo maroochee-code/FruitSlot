@@ -21,20 +21,21 @@ const POOL_NAME_TEXT: String = "POOL"
 const POOL_BANNER_BG: Color = Color("FFB040")
 const POOL_BANNER_FG: Color = Color("2A1800")
 const TITLE_Y: float = 70.0
-const TITLE_FONT_SIZE: int = 80
+## 글자 크기는 갈무리 원래 크기의 정수배: 14(15px) ×5 = 75, ×3 = 45 / 11(12px) ×4 = 48, ×1 = 12
+const TITLE_FONT_MULTIPLE: int = 5
 const TITLE_COLOR_A: Color = Color("FFD700")
 const TITLE_COLOR_B: Color = Color("FF4040")
 ## FEVER! 글자 색이 바뀌는 간격(초)
 const TITLE_FLASH_SEC: float = 0.15
 const BANNER_RECT: Rect2 = Rect2(170, 180, 300, 70)
-const NAME_FONT_SIZE: int = 44
+const NAME_FONT_MULTIPLE: int = 3
 const BONUS_Y: float = 275.0
-const BONUS_FONT_SIZE: int = 48
+const BONUS_FONT_MULTIPLE: int = 4
 const BONUS_COLOR: Color = Color("FFD700")
-const COUNT_FONT_SIZE: int = 14
+const COUNT_FONT_MULTIPLE: int = 1
 const COUNT_COLOR: Color = Color("8A8AA0")
 const HINT_TEXT: String = "SPACE: 건너뛰기"
-const HINT_FONT_SIZE: int = 12
+const HINT_FONT_MULTIPLE: int = 1
 const HINT_Y: float = 440.0
 
 var _steps: Array[Dictionary] = []
@@ -72,7 +73,7 @@ func _init() -> void:
 	dim.size = SCREEN_SIZE
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(dim)
-	_setup_label(_title, Rect2(0, TITLE_Y, SCREEN_SIZE.x, 100), TITLE_FONT_SIZE, TITLE_COLOR_A)
+	_setup_label(_title, Rect2(0, TITLE_Y, SCREEN_SIZE.x, 100), UiFont.Face.LARGE, TITLE_FONT_MULTIPLE, TITLE_COLOR_A)
 	_title.text = TITLE_TEXT
 	_banner.position = BANNER_RECT.position
 	_banner.size = BANNER_RECT.size
@@ -82,12 +83,12 @@ func _init() -> void:
 	_name.size = BANNER_RECT.size
 	_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_name.add_theme_font_size_override("font_size", NAME_FONT_SIZE)
+	UiFont.apply(_name, UiFont.Face.LARGE, NAME_FONT_MULTIPLE)
 	_banner.add_child(_name)
-	_setup_label(_bonus, Rect2(0, BONUS_Y, SCREEN_SIZE.x, 70), BONUS_FONT_SIZE, BONUS_COLOR)
-	_setup_label(_counter, Rect2(0, 8, SCREEN_SIZE.x - 12, 24), COUNT_FONT_SIZE, COUNT_COLOR)
+	_setup_label(_bonus, Rect2(0, BONUS_Y, SCREEN_SIZE.x, 70), UiFont.Face.BODY, BONUS_FONT_MULTIPLE, BONUS_COLOR)
+	_setup_label(_counter, Rect2(0, 8, SCREEN_SIZE.x - 12, 24), UiFont.Face.BODY, COUNT_FONT_MULTIPLE, COUNT_COLOR)
 	_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_setup_label(_hint, Rect2(0, HINT_Y, SCREEN_SIZE.x, 24), HINT_FONT_SIZE, COUNT_COLOR)
+	_setup_label(_hint, Rect2(0, HINT_Y, SCREEN_SIZE.x, 24), UiFont.Face.BODY, HINT_FONT_MULTIPLE, COUNT_COLOR)
 	_hint.text = HINT_TEXT
 	_show_step_content(false)
 
@@ -278,12 +279,12 @@ func _show_step_content(show_content: bool) -> void:
 	_hint.visible = _playing
 
 
-func _setup_label(label: Label, rect: Rect2, font_size: int, color: Color) -> void:
+func _setup_label(label: Label, rect: Rect2, face: UiFont.Face, multiple: int, color: Color) -> void:
 	label.position = rect.position
 	label.size = rect.size
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.add_theme_font_size_override("font_size", font_size)
+	UiFont.apply(label, face, multiple)
 	label.add_theme_color_override("font_color", color)
 	add_child(label)

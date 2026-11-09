@@ -3,8 +3,9 @@ extends PanelContainer
 ## 3×3 릴의 칸 하나. 색 박스 + 글자, 그림 파일이 있으면 그림. 로직 결과를 보여주기만 한다.
 
 const BORDER_WIDTH: int = 3
-const FRAME_WIDTH: int = 5
-const FRAME_COLOR: Color = Color("FFFFFF")
+## 당첨 강조 테두리: 얇은 금색 3px
+const FRAME_WIDTH: int = 3
+const FRAME_COLOR: Color = Color("ffe14d")
 const EMPTY_BG: Color = Color("202028")
 const EMPTY_BORDER: Color = Color("404050")
 

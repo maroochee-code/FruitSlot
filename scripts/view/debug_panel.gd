@@ -2,7 +2,6 @@ class_name DebugPanel
 extends PanelContainer
 ## 로직 결과를 글자로 보여주는 디버그 창. F1로 켜고 끈다. (기본 꺼짐)
 
-const FONT_SIZE: int = 10
 const BG_COLOR: Color = Color(0, 0, 0, 0.88)
 const TEXT_COLOR: Color = Color("C8FFC8")
 
@@ -13,7 +12,7 @@ func _init() -> void:
 	var box: StyleBoxFlat = StyleBoxFlat.new()
 	box.bg_color = BG_COLOR
 	add_theme_stylebox_override("panel", box)
-	_label.add_theme_font_size_override("font_size", FONT_SIZE)
+	UiFont.apply(_label, UiFont.Face.SMALL)
 	_label.add_theme_color_override("font_color", TEXT_COLOR)
 	# 오른쪽 끝에서 잘리지 않도록 줄바꿈을 켠다.
 	_label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY

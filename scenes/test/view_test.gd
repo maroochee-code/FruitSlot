@@ -44,6 +44,7 @@ func _ready() -> void:
 	_test_initial_screen(main)
 	_test_layout(main)
 	_test_board_layout(main)
+	_test_ui_layout(main)
 	_test_paytable(main)
 	_test_fever_panel(main)
 	_test_pool_color(main)
@@ -174,6 +175,151 @@ func _test_board_layout(main: Control) -> void:
 	_check(label_count > 0 and labels_ok, "라인 라벨 33×21, 보드 바깥 (왼쪽 x=6 / 오른쪽 x=396 / 위쪽 y=9)")
 
 
+## 6-C: 오른쪽 패널·하단 표시창·버튼 줄·아이콘·폰트가 목표 배치(640×480)와 맞는지, 글자가 상자 밖으로 넘치지 않는지
+func _test_ui_layout(main: Control) -> void:
+	var rects: Dictionary = {
+		"Title": Rect2(450, 9, 180, 72), "PoolBox": Rect2(450, 87, 180, 42),
+		"FeverBox": Rect2(450, 135, 180, 132), "PaytablePanel": Rect2(450, 273, 180, 138),
+		"CreditBox": Rect2(9, 414, 150, 57), "NoticeBox": Rect2(165, 414, 264, 57),
+		"WinBox": Rect2(435, 414, 96, 57), "BetBox": Rect2(537, 414, 93, 57),
+		"ButtonStrip": Rect2(6, 354, 444, 48),
+	}
+	var rects_ok: bool = true
+	for node_name: String in rects:
+		var node: Control = main.get_node(node_name)
+		var rect: Rect2 = rects[node_name]
+		if node.position != rect.position or node.size != rect.size:
+			rects_ok = false
+			print("  배치 불일치: ", node_name, " ", node.position, node.size)
+	_check(rects_ok, "오른쪽 패널·하단 표시창·버튼 띠 위치와 크기가 목표대로")
+	var xs: Array = [15.0, 102.0, 189.0, 276.0, 363.0]
+	var names: Array = ["CancelButton", "CoinButton", "StartButton", "BetButton", "MaxBetButton"]
+	var buttons_ok: bool = true
+	for i: int in names.size():
+		var button: Button = main.get_node(names[i])
+		buttons_ok = buttons_ok and button.position == Vector2(xs[i], 360) and button.size == Vector2(81, 36)
+	_check(buttons_ok, "버튼 5개 y=360, 81×36, x=15/102/189/276/363")
+	var skin_ok: bool = true
+	for node_name: String in ["CancelButton", "StopButton1", "StartButton"]:
+		var button: Button = main.get_node(node_name)
+		for state: String in ["normal", "pressed", "disabled"]:
+			skin_ok = skin_ok and button.get_theme_stylebox(state) is StyleBoxTexture
+	_check(skin_ok, "버튼(STOP 포함)이 3상태 그림 스킨을 씀")
+	var pressed: StyleBoxTexture = (main.get_node("StartButton") as Button).get_theme_stylebox("pressed")
+	_check(pressed.content_margin_top - pressed.content_margin_bottom == 6.0, "눌린 버튼은 글자가 3px(아트 1px) 내려감")
+	_check((main.get_node("StartButton") as Button).get_theme_color("font_disabled_color") == Color("6b7099"), "비활성 버튼 글자색 #6b7099")
+	var font: FontFile = main.get_theme_default_font() as FontFile
+	_check(font != null and font.antialiasing == TextServer.FONT_ANTIALIASING_NONE and font.hinting == TextServer.HINTING_NONE 			and font.subpixel_positioning == TextServer.SUBPIXEL_POSITIONING_DISABLED, "기본 폰트: 갈무리, 안티앨리어싱·힌팅·서브픽셀 끔")
+	_check(font != null and font.resource_path.ends_with("Galmuri11.ttf") and main.get_theme_default_font_size() == 12, "기본 글자 갈무리11 12px (원래 크기 ×1)")
+	var sizes_ok: bool = true
+	for face: UiFont.Face in UiFont.NATIVE_SIZES:
+		sizes_ok = sizes_ok and UiFont.size_of(face, 3) == 3 * int(UiFont.NATIVE_SIZES[face])
+	_check(sizes_ok, "도트 폰트 크기는 원래 크기의 정수배")
+	_check(_box(main, "CreditBox").value_color() == Color("7dff9a") and _box(main, "WinBox").value_color() == Color("ffe14d") 			and _box(main, "PoolBox").value_color() == Color("ff9a1f") and _box(main, "BetBox").value_color() == Color("ffffff"), "숫자 색: CREDIT #7dff9a / WIN #ffe14d / POOL #ff9a1f / BET 흰색")
+	_check(_box(main, "CreditBox").title_label().get_theme_color("font_color") == Color("9aa0c8"), "라벨 글자색 #9aa0c8")
+	_check(SymbolCell.FRAME_WIDTH == 3 and SymbolCell.FRAME_COLOR == Color("ffe14d"), "당첨 강조: 금색 #ffe14d 3px")
+	_check(main.DEBUG_RECT.end.y <= 414.0, "디버그 창이 하단 표시창 위에서 끝남")
+	_test_ui_icons(main)
+	_test_number_shrink(main)
+	_test_ui_text_fits(main)
+
+
+## 큰 숫자가 칸 폭을 넘으면 글자가 반(원래 크기의 정수배)으로 줄고, 원래 숫자로 돌아오면 다시 커짐
+func _test_number_shrink(main: Control) -> void:
+	var win: InfoBox = _box(main, "WinBox")
+	var before: String = win.value_text()
+	win.set_value("0")
+	_check(win.value_font_size_now() == 24, "WIN 짧은 숫자는 24px")
+	win.set_value("12345678")
+	_check(win.value_font_size_now() == 12 and win.value_min_size().x <= win.value_area().size.x, "WIN 8자리는 12px로 줄어 칸 안에 들어감")
+	win.set_value(before)
+	_check(win.value_font_size_now() == 24, "짧은 숫자로 돌아오면 다시 24px")
+
+
+func _test_ui_icons(main: Control) -> void:
+	var fever: FeverPanel = _fever(main)
+	var data: BalanceData = GameState.get_balance()
+	var fever_ok: bool = true
+	var seven_red: bool = true
+	for symbol: String in data.fever_symbols:
+		var icon: TextureRect = fever.icon_of(symbol)
+		fever_ok = fever_ok and icon.texture != null and icon.size == icon.texture.get_size() * 2.0
+		fever_ok = fever_ok and Rect2(Vector2.ZERO, fever.size).encloses(Rect2(icon.position, icon.size))
+	seven_red = fever.normal_count_color("SEVEN") == Color("e8283c") and fever.count_color("SEVEN") == Color("e8283c")
+	_check(fever_ok, "피버 카운터 아이콘이 아트 ×2(24×20) 크기로 패널 안에 있음")
+	_check(seven_red, "세븐 개수는 빨간색 #e8283c")
+	_test_fever_rows(fever, data)
+	var table: PaytablePanel = main.get_node("PaytablePanel")
+	var left: Array = ["CHERRY", "MELON", "BELL", "BAR"]
+	var right: Array = ["ORANGE", "GRAPE", "SEVEN"]
+	var cols_ok: bool = true
+	for symbol: String in left:
+		cols_ok = cols_ok and table.icon_of(symbol).position.x < 90.0
+	for symbol: String in right:
+		cols_ok = cols_ok and table.icon_of(symbol).position.x >= 90.0
+	for i: int in left.size() - 1:
+		cols_ok = cols_ok and table.icon_of(left[i]).position.y < table.icon_of(left[i + 1]).position.y
+	for i: int in right.size() - 1:
+		cols_ok = cols_ok and table.icon_of(right[i]).position.y < table.icon_of(right[i + 1]).position.y
+	_check(cols_ok, "배당표 2열: 왼쪽 체리·수박·벨·BAR / 오른쪽 오렌지·포도·세븐 (위→아래)")
+	var icons_ok: bool = true
+	for symbol: String in data.symbol_ids:
+		var icon: TextureRect = table.icon_of(symbol)
+		icons_ok = icons_ok and icon.texture != null and icon.size == icon.texture.get_size() * 2.0
+		icons_ok = icons_ok and table.multiplier_label_of(symbol).horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT
+	_check(icons_ok, "배당표 아이콘(12×10, BAR 15×10)이 정수 배율, 배수는 오른쪽 정렬")
+	var dividers: int = 0
+	var divider_color_ok: bool = true
+	for child: Node in table.get_children():
+		if child is ColorRect:
+			dividers += 1
+			divider_color_ok = divider_color_ok and (child as ColorRect).color == Color("0e1130")
+	_check(dividers == 3 + 2 + 1 and divider_color_ok, "배당표 구분선(가로 5 + 세로 1)이 어두운 색 #0e1130")
+
+
+## 피버 카운터: 4행 1열, 행 높이 26, 아이콘은 같은 x, 개수는 같은 오른쪽 끝(고정 열)에 오른쪽 정렬
+func _test_fever_rows(fever: FeverPanel, data: BalanceData) -> void:
+	_check(data.fever_symbols == PackedStringArray(["CHERRY", "GRAPE", "BELL", "SEVEN"]), "피버 대상 순서: 체리, 포도, 벨, 세븐")
+	var rows_ok: bool = true
+	var icon_x: float = fever.icon_of(data.fever_symbols[0]).position.x
+	var right_edge: float = fever.count_label_of(data.fever_symbols[0]).position.x + fever.count_label_of(data.fever_symbols[0]).size.x
+	var title: Label = fever.get_node("Title")
+	var previous_y: float = title.position.y + title.get_combined_minimum_size().y
+	for symbol: String in data.fever_symbols:
+		var icon: TextureRect = fever.icon_of(symbol)
+		var label: Label = fever.count_label_of(symbol)
+		rows_ok = rows_ok and icon.position.x == icon_x
+		rows_ok = rows_ok and label.position.x + label.size.x == right_edge and label.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT
+		rows_ok = rows_ok and label.size.y == 26.0 and label.position.y >= previous_y
+		rows_ok = rows_ok and absf((icon.position.y + icon.size.y / 2.0) - (label.position.y + label.size.y / 2.0)) < 0.01
+		previous_y = label.position.y + label.size.y
+	_check(rows_ok, "피버 카운터 4행 1열: 아이콘 x 고정, 개수 오른쪽 끝 고정·오른쪽 정렬, 행 높이 26, 제목 아래에서 시작")
+	_check(previous_y <= fever.size.y - 6.0 and right_edge <= fever.size.x - 6.0, "피버 카운터 4행이 패널(132) 안쪽 여백 안에 모두 들어감")
+	var same_size: bool = true
+	for symbol: String in data.fever_symbols:
+		same_size = same_size and fever.count_label_of(symbol).get_theme_font_size("font_size") == 20
+	_check(same_size, "피버 개수 글자 20px (갈무리9 ×2, 아이콘 높이 20과 맞춤)")
+
+
+## 모든 글자 칸의 최소 크기가 자기 칸(부모 패널) 안에 들어가는지: 넘치면 글자가 잘린다
+func _test_ui_text_fits(main: Control) -> void:
+	var problems: PackedStringArray = PackedStringArray()
+	for node_name: String in ["PoolBox", "CreditBox", "WinBox", "BetBox", "NoticeBox", "FeverBox", "PaytablePanel"]:
+		var panel: Control = main.get_node(node_name)
+		for child: Node in panel.get_children():
+			var label: Label = child as Label
+			if label == null:
+				continue
+			var need: Vector2 = label.get_combined_minimum_size()
+			if label.autowrap_mode == TextServer.AUTOWRAP_OFF and need.x > label.size.x + 0.5:
+				problems.append("%s/%s 폭 %s > %s" % [node_name, label.name, need.x, label.size.x])
+			if need.y > label.size.y + 0.5 and label.autowrap_mode == TextServer.AUTOWRAP_OFF:
+				problems.append("%s/%s 높이 %s > %s" % [node_name, label.name, need.y, label.size.y])
+	for message: String in problems:
+		print("  글자 넘침: ", message)
+	_check(problems.is_empty(), "패널 안 글자가 칸 밖으로 넘치지 않음 (초기 화면)")
+
+
 func _test_paytable(main: Control) -> void:
 	var data: BalanceData = GameState.get_balance()
 	var panel: PaytablePanel = main.get_node("PaytablePanel")
@@ -217,7 +363,7 @@ func _test_fever_panel(main: Control) -> void:
 		_check(panel.is_last_one(symbol) == should_blink and panel.is_flashing(symbol) == should_blink, "남은 1회: %s 깜빡임 켜짐 = %s (초기값 %d)" % [symbol, should_blink, data.fever_initial_counts[symbol]])
 		_check((panel.count_color(symbol) == FeverPanel.LAST_ONE_COLOR) == should_blink, "남은 1회: %s 켜짐일 때 글자색 = 강조색 여부 %s" % [symbol, should_blink])
 		_set_blink(main, false)
-		_check(not panel.is_flashing(symbol) and panel.count_color(symbol) == FeverPanel.COUNT_COLOR, "남은 1회: %s 꺼짐일 때 평소 색" % symbol)
+		_check(not panel.is_flashing(symbol) and panel.count_color(symbol) == panel.normal_count_color(symbol), "남은 1회: %s 꺼짐일 때 평소 색" % symbol)
 	# 남은 횟수가 2 이상이면 켜짐 때도 깜빡이지 않음
 	for symbol: String in data.fever_symbols:
 		counts[symbol] = maxi(2, data.fever_initial_counts[symbol])

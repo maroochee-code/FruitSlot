@@ -5,7 +5,10 @@
   assets/symbols/*.png        큰 심볼 32x24 (7종)
   assets/ui/cell_tile.png     칸 타일 36x28
   assets/ui/icons/*.png       작은 아이콘 12x10 (BAR만 15x10)
-  assets/_preview/sheet.png   위 전부를 x3 Nearest로 확대해 한 장에
+  assets/ui/panel.png         패널 9-slice (6-C, 최종 크기 24x24 = 아트 8x8 x3, 모서리 6px)
+  assets/ui/button_normal.png / button_pressed.png / button_disabled.png   버튼 3상태 9-slice (같은 규격)
+  assets/ui/line_label_a.png ~ _h.png   라인 라벨 33x21 (아트 11x7 x3)
+  assets/_preview/sheet.png   위 전부를 x3 Nearest로 확대해 한 장에 (6-C 에셋은 이미 3배라 그대로 붙임)
 규칙: 안티앨리어싱·그라데이션 없음(색은 팔레트 몇 가지만), 1px 외곽선, 왼쪽 위 밝게/오른쪽 아래 어둡게 2톤, 하이라이트 점.
 """
 from pathlib import Path
@@ -350,6 +353,69 @@ def cell_tile():
     return c
 
 
+# ------------------------------------------------------------------ 6-C UI 에셋 (최종 크기로 저장)
+
+PANEL_ART = 8  # 아트 8x8 -> 24x24, 9-slice 모서리 2아트px = 6px
+PANEL_FILL = rgb("1b1f4a")
+PANEL_LIGHT = rgb("5f6fd0")
+PANEL_DARK = rgb("0e1130")
+
+# 버튼 상태: (면, 위·왼쪽 변, 아래·오른쪽 변)
+BUTTON_STATES = {
+    "normal": (rgb("3d4fb8"), rgb("7f8fee"), rgb("27338a")),
+    "pressed": (rgb("2e3d96"), rgb("27338a"), rgb("7f8fee")),  # 베벨 반전
+    "disabled": (rgb("2a2f5a"), rgb("3a4070"), rgb("1a1d3a")),
+}
+LINE_COLORS = {
+    "a": "ff5a5a", "b": "4fc3f7", "c": "ffd23a", "d": "4cd964",
+    "e": "ff7ad9", "f": "ff9a1f", "g": "9b8cff", "h": "3ee0c8",
+}
+LABEL_BG = rgb("0e1130")
+
+
+def bevel_box(w, h, fill, light, dark):
+    """바깥 1px 외곽선 + 안쪽 1px 베벨(위·왼쪽 light, 아래·오른쪽 dark) + 면. 네 모서리는 비움."""
+    c = Canvas(w, h)
+    for y in range(h):
+        for x in range(w):
+            if x in (0, w - 1) or y in (0, h - 1):
+                color = OUTLINE
+            elif x == 1 or y == 1:
+                color = light
+            elif x == w - 2 or y == h - 2:
+                color = dark
+            else:
+                color = fill
+            c.set(x, y, color)
+    c.set(w - 2, 1, dark)  # 베벨이 만나는 모서리는 어두운 쪽
+    c.set(1, h - 2, dark)
+    for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        c.set(x, y, CLEAR)
+    return c
+
+
+def panel_nine():
+    return bevel_box(PANEL_ART, PANEL_ART, PANEL_FILL, PANEL_LIGHT, PANEL_DARK)
+
+
+def button_nine(state):
+    fill, light, dark = BUTTON_STATES[state]
+    return bevel_box(PANEL_ART, PANEL_ART, fill, light, dark)
+
+
+def line_label(color_hex):
+    """11x7 아트: 라인 색 1px 테두리 + 어두운 바탕. 글자는 게임에서 그린다(베팅 수가 바뀌므로)."""
+    c = Canvas(11, 7)
+    border = rgb(color_hex)
+    for y in range(7):
+        for x in range(11):
+            edge = x in (0, 10) or y in (0, 6)
+            c.set(x, y, border if edge else LABEL_BG)
+    for x, y in ((0, 0), (10, 0), (0, 6), (10, 6)):
+        c.set(x, y, CLEAR)
+    return c
+
+
 # ------------------------------------------------------------------ 저장·미리보기
 
 BIG = {"cherry": big_cherry, "orange": big_orange, "melon": big_melon, "grape": big_grape,
@@ -375,6 +441,14 @@ def main():
     for n, img in smalls.items():
         img.save(ROOT / f"assets/ui/icons/{n}.png")
     tile.save(ROOT / "assets/ui/cell_tile.png")
+    ui = {"panel": panel_nine().image()}
+    for state in BUTTON_STATES:
+        ui[f"button_{state}"] = button_nine(state).image()
+    for key, hexa in LINE_COLORS.items():
+        ui[f"line_label_{key}"] = line_label(hexa).image()
+    ui_final = {n: scaled(img) for n, img in ui.items()}  # 최종 크기 = 아트 x3
+    for n, img in ui_final.items():
+        img.save(ROOT / f"assets/ui/{n}.png")
 
     pad = 12
     col_w = 36 * SCALE + pad
@@ -393,7 +467,21 @@ def main():
         sheet.alpha_composite(scaled(on_tile), (x, y_tile))
         sheet.alpha_composite(scaled(smalls[n]), (x + 10 * SCALE, y_small))
         d.text((x + 4, y_small + 10 * SCALE + 6), n, fill=(255, 255, 255, 255))
-    sheet.crop((0, 0, sheet.width, y_small + 10 * SCALE + 24)).save(ROOT / "assets/_preview/sheet.png")
+    base_h = y_small + 10 * SCALE + 24
+    ui_h = 24 * SCALE + 70
+    full = Image.new("RGBA", (sheet.width, base_h + ui_h), rgb("2a2a44"))
+    full.alpha_composite(sheet.crop((0, 0, sheet.width, base_h)), (0, 0))
+    d2 = ImageDraw.Draw(full)
+    d2.text((pad, base_h), "6-C UI (final size: panel / button normal, pressed, disabled / line labels A-H)", fill=(255, 255, 255, 255))
+    x = pad
+    for n in ["panel", "button_normal", "button_pressed", "button_disabled"]:
+        full.alpha_composite(ui_final[n], (x, base_h + 20))
+        x += ui_final[n].width + pad
+    x = pad
+    for key in LINE_COLORS:
+        full.alpha_composite(ui_final[f"line_label_{key}"], (x, base_h + 20 + 24 * SCALE + 12))
+        x += 33 + pad
+    full.save(ROOT / "assets/_preview/sheet.png")
     print("done:", ROOT / "assets/_preview/sheet.png")
 
 

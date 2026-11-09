@@ -2,8 +2,9 @@ class_name SymbolStyle
 extends RefCounted
 ## 심볼별 화면 표시 설정(바탕색, 글자색, 테두리, 글자). 밸런스 수치가 아니라 화면 설정이라 여기 둔다.
 
-const DEFAULT_FONT_SIZE: int = 22
-const TOP_FONT_SIZE: int = 56
+## 그림이 없을 때 쓰는 대체 글자 크기 (갈무리11 원래 크기 12의 정수배)
+const DEFAULT_FONT_SIZE: int = 24
+const TOP_FONT_SIZE: int = 60
 const BORDER_NORMAL: Color = Color(0, 0, 0, 0.55)
 const BORDER_GOLD: Color = Color("FFD700")
 const UNKNOWN_BG: Color = Color("FF00FF")
@@ -20,6 +21,9 @@ const ICON_PATHS: Dictionary = {
 	"BAR": ICON_DIR + "bar.png",
 	"SEVEN": ICON_DIR + "seven.png",
 }
+
+## 작은 아이콘(12×10, BAR는 15×10) 폴더. 피버 카운터·배당표가 쓴다.
+const SMALL_ICON_DIR: String = "res://assets/ui/icons/"
 
 ## 도트 아트 기준 좌표를 화면 좌표로 키우는 배율 (기준 아트 213×160 → 640×480)
 const ART_SCALE: int = 3
@@ -43,6 +47,14 @@ static func get_style(symbol_id: String) -> Dictionary:
 	if STYLES.has(symbol_id):
 		return STYLES[symbol_id]
 	return { "bg": UNKNOWN_BG, "fg": Color.BLACK, "border": BORDER_NORMAL, "text": symbol_id }
+
+
+## 작은 아이콘. 심볼 ID(CHERRY 등)의 소문자 이름 파일. 없으면 null.
+static func load_small_icon(symbol_id: String) -> Texture2D:
+	var path: String = SMALL_ICON_DIR + symbol_id.to_lower() + ".png"
+	if not ResourceLoader.exists(path):
+		return null
+	return load(path) as Texture2D
 
 
 ## 칸 바탕 타일 그림. 없으면 null.

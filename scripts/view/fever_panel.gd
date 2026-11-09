@@ -1,29 +1,35 @@
 class_name FeverPanel
 extends Panel
-## 피버 카운터 패널: 대상 심볼마다 한 줄(색 박스 + 이름 + ×남은 횟수).
+## 피버 카운터 패널: 대상 심볼마다 한 행 (작은 아이콘 ×2 왼쪽 + "×남은 횟수" 오른쪽 고정 열). 4행 1열.
 ## 숫자는 balance.json(BalanceData)에서만 읽는다. 초기값이 2 이상인 심볼이 마지막 1회만 남으면 그 줄이 깜빡인다.
 ## (초기값이 처음부터 1인 심볼은 항상 1이라 깜빡이지 않는다.)
 
 const TITLE_TEXT: String = "피버 카운터"
-const BG_COLOR: Color = Color("1A1A22")
-const BORDER_COLOR: Color = Color("3A3A48")
-const TITLE_COLOR: Color = Color("8A8AA0")
-const NAME_COLOR: Color = Color("D8D8E4")
-const COUNT_COLOR: Color = Color("F2F2F2")
-## 깜빡임 "켜짐" 때의 글자 색 (꺼짐일 때는 위의 평소 색)
+const TITLE_COLOR: Color = UiSkin.LABEL_TEXT_COLOR
+const COUNT_COLOR: Color = Color("ffffff")
+## 심볼별 평소 숫자 색 (여기 없는 심볼은 COUNT_COLOR). 세븐은 빨간색.
+const COUNT_COLORS: Dictionary = {
+	"SEVEN": Color("e8283c"),
+}
+## 깜빡임 "켜짐" 때의 글자 색 (꺼짐일 때는 평소 색)
 const LAST_ONE_COLOR: Color = Color("FF5050")
-const TITLE_FONT_SIZE: int = 10
-const ROW_FONT_SIZE: int = 14
+## 개수 글자: 갈무리9(10px) ×2 = 20px. 아이콘 높이(10×2 = 20)와 맞춘다.
+const COUNT_FONT_MULTIPLE: int = 2
+const ICON_SCALE: int = 2
+## 한 행 높이. 제목(14) + 4행(104) + 위아래 여백(12)이 패널 높이 132 안에 들어간다.
+const ROW_HEIGHT: float = 26.0
+const ICON_LEFT_PAD: float = 3.0
+## 아이콘이 차지할 수 있는 최대 폭 (피버 대상 아이콘은 모두 12×10 → 24)
+const MAX_ICON_WIDTH: float = 24.0
+const COUNT_RIGHT_PAD: float = 3.0
+## 패널 모서리(9-slice 6px) 안쪽 여백
 const PAD: float = 6.0
-const TITLE_HEIGHT: float = 16.0
-const NAME_WIDTH: float = 52.0
-const MINI_SIZE: Vector2 = Vector2(14, 14)
-const MINI_BORDER: int = 1
-const MINI_GAP: float = 6.0
+const TITLE_X: float = 9.0
+const TITLE_HEIGHT: float = 14.0
 
 var _data: BalanceData
-var _name_labels: Dictionary[String, Label] = {}
 var _count_labels: Dictionary[String, Label] = {}
+var _icons: Dictionary[String, TextureRect] = {}
 var _counts: Dictionary[String, int] = {}
 var _blink_on: bool = false
 
@@ -33,26 +39,22 @@ func _init(box_name: String, rect: Rect2) -> void:
 	position = rect.position
 	size = rect.size
 	clip_contents = true
-	var box: StyleBoxFlat = StyleBoxFlat.new()
-	box.bg_color = BG_COLOR
-	box.border_color = BORDER_COLOR
-	box.set_border_width_all(1)
-	add_theme_stylebox_override("panel", box)
+	add_theme_stylebox_override("panel", UiSkin.panel_box())
 
 
-## 피버 대상 심볼(balance.json의 fever.targets 순서)대로 한 줄씩 만든다.
+## 피버 대상 심볼(balance.json의 fever.targets 순서)대로 격자 칸을 만든다.
 func setup(data: BalanceData) -> void:
 	_data = data
 	var title: Label = Label.new()
+	title.name = "Title"
 	title.text = TITLE_TEXT
-	title.position = Vector2(PAD, 1.0)
-	title.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
+	title.position = Vector2(TITLE_X, PAD)
+	UiFont.apply(title, UiFont.Face.SMALL)
 	title.add_theme_color_override("font_color", TITLE_COLOR)
 	add_child(title)
-	var rows: int = data.fever_symbols.size()
-	var row_height: float = (size.y - TITLE_HEIGHT) / maxf(1.0, rows)
-	for i: int in rows:
-		_add_row(data.fever_symbols[i], Vector2(PAD, TITLE_HEIGHT + i * row_height), row_height)
+	var grid_top: float = PAD + TITLE_HEIGHT
+	for i: int in data.fever_symbols.size():
+		_add_row(data.fever_symbols[i], Rect2(PAD, grid_top + i * ROW_HEIGHT, size.x - PAD * 2.0, ROW_HEIGHT))
 
 
 ## 스핀 결과의 카운터 스냅샷으로 숫자를 바꾼다.
@@ -81,11 +83,11 @@ func is_flashing(symbol: String) -> bool:
 	return is_last_one(symbol) and _blink_on
 
 
-## 기존 형식 그대로의 텍스트 ("체리 ×20" 줄바꿈 목록). 테스트·디버그용
+## "체리 ×20" 형식의 줄바꿈 목록. 화면에는 아이콘+숫자만 보이고, 테스트·디버그가 이 글자로 값을 확인한다.
 func value_text() -> String:
 	var rows: PackedStringArray = PackedStringArray()
 	for symbol: String in _data.fever_symbols:
-		rows.append("%s %s" % [_name_labels[symbol].text, _count_labels[symbol].text])
+		rows.append("%s %s" % [_data.symbol_names.get(symbol, symbol), _count_labels[symbol].text])
 	return "\n".join(rows)
 
 
@@ -94,58 +96,60 @@ func count_color(symbol: String) -> Color:
 	return _count_labels[symbol].get_theme_color("font_color")
 
 
+## 깜빡이지 않을 때 이 심볼 숫자의 색
+func normal_count_color(symbol: String) -> Color:
+	return COUNT_COLORS.get(symbol, COUNT_COLOR)
+
+
 func row_count() -> int:
 	return _count_labels.size()
 
 
+## 이 심볼의 아이콘과 숫자 글자 (테스트용)
+func icon_of(symbol: String) -> TextureRect:
+	return _icons[symbol]
+
+
+func count_label_of(symbol: String) -> Label:
+	return _count_labels[symbol]
+
+
 func _apply_blink() -> void:
 	for symbol: String in _data.fever_symbols:
-		var color_name: Color = NAME_COLOR
-		var color_count: Color = COUNT_COLOR
-		if is_flashing(symbol):
-			color_name = LAST_ONE_COLOR
-			color_count = LAST_ONE_COLOR
-		_name_labels[symbol].add_theme_color_override("font_color", color_name)
+		var color_count: Color = LAST_ONE_COLOR if is_flashing(symbol) else normal_count_color(symbol)
 		_count_labels[symbol].add_theme_color_override("font_color", color_count)
 
 
-func _add_row(symbol: String, top_left: Vector2, row_height: float) -> void:
-	var mini_y: float = top_left.y + (row_height - MINI_SIZE.y) / 2.0
-	add_child(_make_mini_box(symbol, Vector2(top_left.x, mini_y)))
-	var name_x: float = top_left.x + MINI_SIZE.x + MINI_GAP
-	var name_label: Label = _make_label(_data.symbol_names.get(symbol, symbol), NAME_COLOR, HORIZONTAL_ALIGNMENT_LEFT)
-	name_label.position = Vector2(name_x, top_left.y)
-	name_label.size = Vector2(NAME_WIDTH, row_height)
-	add_child(name_label)
-	var count_x: float = name_x + NAME_WIDTH
-	var count_label: Label = _make_label("×%d" % _data.fever_initial_counts[symbol], COUNT_COLOR, HORIZONTAL_ALIGNMENT_RIGHT)
-	count_label.position = Vector2(count_x, top_left.y)
-	count_label.size = Vector2(size.x - PAD - count_x, row_height)
+## 한 행: 아이콘은 왼쪽, 개수는 같은 오른쪽 끝에 맞춘 고정 열 (오른쪽 정렬)
+func _add_row(symbol: String, cell: Rect2) -> void:
+	var icon: TextureRect = _make_icon(symbol)
+	icon.position = cell.position + Vector2(ICON_LEFT_PAD, (cell.size.y - icon.size.y) / 2.0)
+	add_child(icon)
+	var count_label: Label = Label.new()
+	count_label.name = "Count_%s" % symbol
+	count_label.text = "×%d" % _data.fever_initial_counts[symbol]
+	var count_x: float = cell.position.x + ICON_LEFT_PAD + MAX_ICON_WIDTH
+	count_label.position = Vector2(count_x, cell.position.y)
+	count_label.size = Vector2(cell.end.x - COUNT_RIGHT_PAD - count_x, cell.size.y)
+	count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UiFont.apply(count_label, UiFont.Face.SMALL, COUNT_FONT_MULTIPLE)
+	count_label.add_theme_color_override("font_color", normal_count_color(symbol))
 	add_child(count_label)
-	_name_labels[symbol] = name_label
+	_icons[symbol] = icon
 	_count_labels[symbol] = count_label
 	_counts[symbol] = _data.fever_initial_counts[symbol]
 
 
-## 화면의 칸과 같은 색의 작은 박스
-func _make_mini_box(symbol: String, pos: Vector2) -> Panel:
-	var style: Dictionary = SymbolStyle.get_style(symbol)
-	var mini_box: Panel = Panel.new()
-	mini_box.position = pos
-	mini_box.size = MINI_SIZE
-	var box: StyleBoxFlat = StyleBoxFlat.new()
-	box.bg_color = style["bg"]
-	box.border_color = style["border"]
-	box.set_border_width_all(MINI_BORDER)
-	mini_box.add_theme_stylebox_override("panel", box)
-	return mini_box
-
-
-func _make_label(text: String, color: Color, align: HorizontalAlignment) -> Label:
-	var label: Label = Label.new()
-	label.text = text
-	label.horizontal_alignment = align
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", ROW_FONT_SIZE)
-	label.add_theme_color_override("font_color", color)
-	return label
+## 작은 아이콘을 아트 ×2로 놓는다. 그림이 없으면 빈 칸.
+func _make_icon(symbol: String) -> TextureRect:
+	var icon: TextureRect = TextureRect.new()
+	icon.name = "Icon_%s" % symbol
+	icon.texture = SymbolStyle.load_small_icon(symbol)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_SCALE
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if icon.texture != null:
+		icon.size = icon.texture.get_size() * ICON_SCALE
+	return icon

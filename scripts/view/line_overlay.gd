@@ -5,7 +5,6 @@ extends Control
 
 const VERTICAL: String = "vertical"
 const LABEL_SIZE: Vector2 = Vector2(33, 21)
-const LABEL_FONT_SIZE: int = 12
 const LABEL_STACK_GAP: float = 2.0
 ## 라벨은 보드 바깥에 둔다 (640×480 기준). 왼쪽 x 6~39 / 오른쪽 x 396~429 / 위쪽 y 9~30
 const LABEL_LEFT_X: float = 6.0
@@ -17,11 +16,10 @@ const LINE_EXTEND: float = 20.0
 const BLINK_CYCLES: int = 3
 const BLINK_HALF_SEC: float = 0.25
 const BLINK_LOW_ALPHA: float = 0.15
-const LABEL_BG: Color = Color("14141C")
 ## 라인 순서(A→H)대로 쓰는 선 색
 const LINE_PALETTE: Array[Color] = [
-	Color("FF5050"), Color("50C8FF"), Color("FFE050"), Color("60E070"),
-	Color("FF90FF"), Color("FFA040"), Color("A0A0FF"), Color("70FFE0"),
+	Color("ff5a5a"), Color("4fc3f7"), Color("ffd23a"), Color("4cd964"),
+	Color("ff7ad9"), Color("ff9a1f"), Color("9b8cff"), Color("3ee0c8"),
 ]
 
 var _data: BalanceData
@@ -191,15 +189,10 @@ func _add_label(line_index: int, pos: Vector2) -> void:
 	label.text = "%s 0" % _data.lines[line_index].id
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", LABEL_FONT_SIZE)
+	UiFont.apply(label, UiFont.Face.SMALL)
 	label.add_theme_color_override("font_color", color)
-	var box: StyleBoxFlat = StyleBoxFlat.new()
-	box.bg_color = LABEL_BG
-	box.border_color = color
-	box.set_border_width_all(1)
-	# 글자 상자가 33×21보다 커지지 않도록 안쪽 여백은 0 (테두리는 그대로 그린다)
-	box.set_content_margin_all(0)
-	label.add_theme_stylebox_override("normal", box)
+	# 바탕은 라인 색 테두리 + 어두운 바탕 그림 (33×21)
+	label.add_theme_stylebox_override("normal", UiSkin.line_label_box(line_index))
 	# 글꼴·여백을 정한 뒤에 크기를 준다 (먼저 주면 기본 글꼴 크기의 최소 크기로 커진다)
 	label.size = LABEL_SIZE
 	add_child(label)
