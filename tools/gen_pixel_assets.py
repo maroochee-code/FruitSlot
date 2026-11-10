@@ -9,11 +9,15 @@
   assets/ui/button_normal.png / button_pressed.png / button_disabled.png   버튼 3상태 9-slice (같은 규격)
   assets/ui/button_on.png     AUTO 켜짐 표시용 (같은 규격)
   assets/ui/line_label_a.png ~ _h.png   라인 라벨 33x21 (아트 11x7 x3)
+  assets/ui/wallpaper_tile.png  마름모 벽지 타일 (6-D, 아트 16x16 -> 48x48)
+  assets/ui/frame.png           기계 프레임 (6-D, 아트 213x160 -> 640x480, 가운데 투명)
+  assets/ui/logo.png            maroochee slot 로고 (6-D, 아트 60x24 -> 180x72, 배경 투명)
+  assets/_preview/6d_screen.png 6-D 전체 화면 근사 합성 (640x480)
   assets/_preview/sheet.png   위 전부를 x3 Nearest로 확대해 한 장에 (6-C 에셋은 이미 3배라 그대로 붙임)
 규칙: 안티앨리어싱·그라데이션 없음(색은 팔레트 몇 가지만), 1px 외곽선, 왼쪽 위 밝게/오른쪽 아래 어둡게 2톤, 하이라이트 점.
 """
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTLINE = (0x2B, 0x1B, 0x3D, 255)
@@ -418,6 +422,270 @@ def line_label(color_hex):
     return c
 
 
+
+# ------------------------------------------------------------------ 6-D 벽지·프레임·로고
+
+ART_W, ART_H = 213, 160
+SCREEN_W, SCREEN_H = 640, 480
+WALL_DARK = rgb("1f6f8b")
+WALL_LIGHT = rgb("2a86a6")
+FRAME_FILL = rgb("1b1f4a")
+FRAME_LIGHT = rgb("5f6fd0")
+FRAME_DARK = rgb("0e1130")
+BULB_OFF = rgb("8a7a3a")  # BoardView.BULB_OFF_COLOR와 같은 색 (꺼진 전구 자리)
+WALL_TILE = 16  # 아트 px
+
+# 프레임 배치 (아트 좌표, 기존 화면 요소 사이 틈. 끝 좌표 포함)
+FRAME_BORDER = 2                         # 바깥 테두리 두께
+BAND_H = (2, 134, 149, 137)              # 가로 띠: 버튼 줄 아래 ~ 하단 표시창 위 (x0, y0, x1, y1)
+BAND_V = (148, 2, 149, 117)              # 세로 띠: 왼쪽 영역 ~ 오른쪽 패널 사이
+# 6-F용 꺼진 전구 소켓 (아트 2x2의 왼쪽 위 좌표). 가로 띠 몸통 위에 8px 간격.
+FRAME_BULB_SOCKETS = [(x, 135) for x in range(6, 146, 8)]
+
+
+def wallpaper_tile():
+    """16x16 청록 마름모 격자. 두 톤만 쓰고 중심 대칭이라 가장자리가 이어진다."""
+    c = Canvas(WALL_TILE, WALL_TILE)
+    half = WALL_TILE / 2
+    for y in range(WALL_TILE):
+        for x in range(WALL_TILE):
+            inside = abs(x + 0.5 - half) + abs(y + 0.5 - half) < half
+            c.set(x, y, WALL_LIGHT if inside else WALL_DARK)
+    return c
+
+
+def frame_art():
+    """213x160 프레임. 바깥 테두리(2px) + 가로·세로 구분 띠 + 꺼진 전구 소켓. 나머지는 투명."""
+    c = Canvas(ART_W, ART_H)
+    # 바깥 테두리: 가장 바깥 1px 외곽선, 안쪽 1px 베벨(위·왼 밝게, 아래·오른 어둡게)
+    for y in range(ART_H):
+        for x in range(ART_W):
+            inner = FRAME_BORDER <= x < ART_W - FRAME_BORDER and FRAME_BORDER <= y < ART_H - FRAME_BORDER
+            if inner:
+                continue
+            outer = x in (0, ART_W - 1) or y in (0, ART_H - 1)
+            if outer:
+                c.set(x, y, OUTLINE)
+            else:
+                c.set(x, y, FRAME_LIGHT if (x == 1 or y == 1) else FRAME_DARK)
+    # 가로 띠: 위아래 외곽선 1px, 가운데 2px 몸통
+    x0, y0, x1, y1 = BAND_H
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            c.set(x, y, OUTLINE if y in (y0, y1) else FRAME_FILL)
+    # 세로 띠: 왼쪽 1px 외곽선, 오른쪽 1px 밝은 줄
+    x0, y0, x1, y1 = BAND_V
+    for y in range(y0, y1 + 1):
+        c.set(x0, y, OUTLINE)
+        c.set(x1, y, FRAME_LIGHT)
+    # 꺼진 전구 소켓 2x2
+    for sx, sy in FRAME_BULB_SOCKETS:
+        for dx in range(2):
+            for dy in range(2):
+                c.set(sx + dx, sy + dy, BULB_OFF)
+    return c
+
+
+def frame_final():
+    """아트 x3 = 639x480, 오른쪽 1px(640번째 열)은 마지막 열을 복사해 채운다."""
+    img = scaled(frame_art().image())
+    out = Image.new("RGBA", (SCREEN_W, SCREEN_H), CLEAR)
+    out.paste(img, (0, 0))
+    out.paste(img.crop((img.width - 1, 0, img.width, img.height)), (img.width, 0))
+    return out
+
+
+# 로고 글자 (직접 찍은 비트맵). X = 찍는 점
+GLYPHS_SMALL = {  # 5 x 5 (h만 5 x 7)
+    "m": ["XXXX.", "X.X.X", "X.X.X", "X.X.X", "X.X.X"],
+    "a": [".XXX.", "....X", ".XXXX", "X...X", ".XXXX"],
+    "r": ["X.XX.", "XX..X", "X....", "X....", "X...."],
+    "o": [".XXX.", "X...X", "X...X", "X...X", ".XXX."],
+    "c": [".XXXX", "X....", "X....", "X....", ".XXXX"],
+    "h": ["X....", "X....", "X.XX.", "XX..X", "X...X", "X...X", "X...X"],
+    "e": [".XXX.", "X...X", "XXXXX", "X....", ".XXXX"],
+}
+GLYPHS_BIG = {  # 7 x 7
+    "S": [".XXXXX.", "XX...XX", "XX.....", ".XXXXX.", ".....XX", "XX...XX", ".XXXXX."],
+    "L": ["XX.....", "XX.....", "XX.....", "XX.....", "XX.....", "XXXXXXX", "XXXXXXX"],
+    "O": [".XXXXX.", "XX...XX", "XX...XX", "XX...XX", "XX...XX", "XX...XX", ".XXXXX."],
+    "T": ["XXXXXXX", "XXXXXXX", "..XXX..", "..XXX..", "..XXX..", "..XXX..", "..XXX.."],
+}
+LOGO_W, LOGO_H = 60, 24
+LOGO_INNER = (2, 2, 57, 21)  # 패널 안쪽 영역 (아트, 끝 포함). 이 밖으로 글자가 나가면 안 된다.
+LOGO_SMALL_Y = 4             # 작은 글자 줄의 위쪽 (키 7칸 기준, x높이 글자는 아래 맞춤)
+LOGO_BIG_Y = 13
+LOGO_GAP_SMALL = 1
+LOGO_GAP_BIG = 2
+
+
+def _text_mask(text, glyphs, y_top, height, gap):
+    """글자들을 가운데 정렬로 찍은 점 집합."""
+    widths = [len(glyphs[ch][0]) for ch in text]
+    total = sum(widths) + gap * (len(text) - 1)
+    x = (LOGO_W - total) // 2
+    mask = set()
+    for ch, w in zip(text, widths):
+        rows = glyphs[ch]
+        y_off = y_top + height - len(rows)  # 아래 맞춤
+        for ry, row in enumerate(rows):
+            for rx, v in enumerate(row):
+                if v == "X":
+                    mask.add((x + rx, y_off + ry))
+        x += w + gap
+    return mask
+
+
+def _paint_text(c, mask, light, dark, split_y):
+    """8방향 1px 외곽선을 두르고, split_y 위는 밝은 톤 / 아래는 어두운 톤으로 칠한다."""
+    for x, y in mask:
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                q = (x + dx, y + dy)
+                if q not in mask:
+                    c.set(q[0], q[1], OUTLINE)
+    for x, y in mask:
+        c.set(x, y, light if y < split_y else dark)
+
+
+def logo_art():
+    c = Canvas(LOGO_W, LOGO_H)
+    small = _text_mask("maroochee", GLYPHS_SMALL, LOGO_SMALL_Y, 7, LOGO_GAP_SMALL)
+    big = _text_mask("SLOT", GLYPHS_BIG, LOGO_BIG_Y, 7, LOGO_GAP_BIG)
+    _paint_text(c, small, TONES["cream"][0], TONES["cream"][1], LOGO_SMALL_Y + 5)
+    _paint_text(c, big, TONES["gold"][0], TONES["gold"][1], LOGO_BIG_Y + 4)
+    return c
+
+
+def logo_bounds(c):
+    """로고 그림에 실제로 칠해진 픽셀의 범위 (x0, y0, x1, y1)."""
+    xs, ys = [], []
+    for y in range(c.h):
+        for x in range(c.w):
+            if c.px[y][x][3] != 0:
+                xs.append(x)
+                ys.append(y)
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+# ------------------------------------------------------------------ 6-D 전체 화면 근사 미리보기
+
+def nine_slice(tex, w, h, margin=6):
+    """9-slice를 Nearest로 늘려 w x h로 만든다 (Godot StyleBoxTexture 근사)."""
+    tw, th = tex.size
+    out = Image.new("RGBA", (w, h), CLEAR)
+    xs_src = [(0, margin), (margin, tw - margin), (tw - margin, tw)]
+    ys_src = [(0, margin), (margin, th - margin), (th - margin, th)]
+    xs_dst = [(0, margin), (margin, w - margin), (w - margin, w)]
+    ys_dst = [(0, margin), (margin, h - margin), (h - margin, h)]
+    for (sy0, sy1), (dy0, dy1) in zip(ys_src, ys_dst):
+        for (sx0, sx1), (dx0, dx1) in zip(xs_src, xs_dst):
+            part = tex.crop((sx0, sy0, sx1, sy1)).resize((dx1 - dx0, dy1 - dy0), Image.NEAREST)
+            out.alpha_composite(part, (dx0, dy0))
+    return out
+
+
+def preview_screen(wall, frame, logo, with_frame=True):
+    """main.gd의 배치 상수대로 기존 요소를 올린 640x480 근사 화면. 반환: (이미지, 요소가 덮은 영역 마스크)"""
+    scr = Image.new("RGBA", (SCREEN_W, SCREEN_H), WALL_DARK)
+    for ty in range(0, SCREEN_H, wall.height):
+        for tx in range(0, SCREEN_W, wall.width):
+            scr.alpha_composite(wall, (tx, ty))
+    if with_frame:
+        scr.alpha_composite(frame, (0, 0))
+    covered = Image.new("L", (SCREEN_W, SCREEN_H), 0)
+    cd = ImageDraw.Draw(covered)
+    d = ImageDraw.Draw(scr)
+    d.fontmode = "1"
+    f11 = ImageFont.truetype(str(ROOT / "assets/fonts/Galmuri11.ttf"), 12)
+    f9 = ImageFont.truetype(str(ROOT / "assets/fonts/Galmuri9.ttf"), 10)
+    f24 = ImageFont.truetype(str(ROOT / "assets/fonts/Galmuri11.ttf"), 24)
+
+    def cover(x, y, w, h):
+        cd.rectangle([x, y, x + w - 1, y + h - 1], fill=255)
+
+    panel_tex = Image.open(ROOT / "assets/ui/panel.png").convert("RGBA")
+
+    def panel(x, y, w, h):
+        scr.alpha_composite(nine_slice(panel_tex, w, h), (x, y))
+        cover(x, y, w, h)
+
+    # 보드 (BoardView 근사)
+    bx, by, bw, bh = 42, 36, 348, 276
+    d.rectangle([bx, by, bx + bw - 1, by + bh - 1], fill=OUTLINE)
+    d.rectangle([bx + 3, by + 3, bx + bw - 4, by + bh - 4], fill=rgb("3a2a5c"))
+    last_x, last_y = 116 - 1 - 2, 92 - 1 - 2
+    ring = [(x, 1) for x in range(1, last_x + 1, 4)] + [(last_x, y) for y in range(5, last_y + 1, 4)] \
+        + [(x, last_y) for x in range(last_x - 4, 0, -4)] + [(1, y) for y in range(last_y - 4, 1, -4)]
+    for i, (ax, ay) in enumerate(ring):
+        col = rgb("ffe14d") if i % 2 == 0 else BULB_OFF
+        d.rectangle([bx + ax * 3, by + ay * 3, bx + ax * 3 + 5, by + ay * 3 + 5], fill=col)
+    cover(bx, by, bw, bh)
+    # 칸 타일 + 심볼 (예시 배열)
+    tile = Image.open(ROOT / "assets/ui/cell_tile.png").convert("RGBA")
+    tile = tile.resize((tile.width * 3, tile.height * 3), Image.NEAREST)
+    names = [["cherry", "seven", "bell"], ["grape", "bar", "melon"], ["orange", "cherry", "seven"]]
+    for col in range(3):
+        for row in range(3):
+            x, y = 54 + col * 108, 48 + row * 84
+            scr.alpha_composite(tile, (x, y))
+            sym = Image.open(ROOT / f"assets/symbols/{names[row][col]}.png").convert("RGBA")
+            scr.alpha_composite(sym.resize((sym.width * 3, sym.height * 3), Image.NEAREST), (x + 6, y + 6))
+    # 라인 라벨 (왼쪽·오른쪽 3개씩 + 위 2개, 대략적인 위치)
+    lab = [Image.open(ROOT / f"assets/ui/line_label_{k}.png").convert("RGBA") for k in "abcdefgh"]
+    for i in range(3):
+        for x in (6, 396):
+            y = 90 + i * 23
+            scr.alpha_composite(lab[i], (x, y))
+            cover(x, y, 33, 21)
+    for i, cx in enumerate((108, 270)):
+        scr.alpha_composite(lab[3 + i], (cx - 16, 9))
+        cover(cx - 16, 9, 33, 21)
+    # 버튼 줄
+    d.rectangle([6, 354, 449, 401], fill=FRAME_DARK)
+    cover(6, 354, 444, 48)
+
+    def button(x, y, w, h, text, state="normal"):
+        tex = Image.open(ROOT / f"assets/ui/button_{state}.png").convert("RGBA")
+        scr.alpha_composite(nine_slice(tex, w, h), (x, y))
+        tw = d.textlength(text, font=f11)
+        d.text((x + (w - tw) // 2, y + (h - 12) // 2 - 1), text, font=f11, fill=(255, 255, 255, 255))
+        cover(x, y, w, h)
+
+    for x, t in zip((15, 102, 189, 276, 363), ("CANCEL", "COIN", "START", "BET", "MAX BET")):
+        button(x, 360, 81, 36, t)
+    for col in range(3):
+        button(60 + col * 108, 318, 96, 33, "STOP %d" % (col + 1))
+    button(384, 318, 60, 33, "AUTO")
+    # 오른쪽 패널
+    panel(450, 9, 180, 72)
+    scr.alpha_composite(logo, (450, 9))
+    for (x, y, w, h, t) in ((450, 87, 180, 42, "POOL"), (450, 135, 180, 132, "FEVER"), (450, 273, 180, 138, "PAYTABLE")):
+        panel(x, y, w, h)
+        d.text((x + 9, y + 6), t, font=f9, fill=rgb("9aa0c8"))
+    # 하단 표시창
+    for (x, w, t, val, vc) in ((9, 150, "CREDIT", "100", "7dff9a"), (165, 264, "", "", "ffffff"),
+                              (435, 96, "WIN", "0", "ffe14d"), (537, 93, "BET", "8", "ffffff")):
+        panel(x, 414, w, 57)
+        if t:
+            d.text((x + 9, 420), t, font=f9, fill=rgb("9aa0c8"))
+            vw = d.textlength(val, font=f24)
+            d.text((x + w - 9 - vw, 434), val, font=f24, fill=rgb(vc))
+    return scr, covered
+
+
+def visible_wall_report(covered, frame):
+    """벽지가 실제로 보이는 면적 (요소·프레임이 덮지 않은 곳)."""
+    cov = covered.load()
+    fr = frame.load()
+    wall = 0
+    for y in range(SCREEN_H):
+        for x in range(SCREEN_W):
+            if cov[x, y] == 0 and fr[x, y][3] == 0:
+                wall += 1
+    return wall, SCREEN_W * SCREEN_H
+
+
 # ------------------------------------------------------------------ 저장·미리보기
 
 BIG = {"cherry": big_cherry, "orange": big_orange, "melon": big_melon, "grape": big_grape,
@@ -485,6 +753,30 @@ def main():
         x += 33 + pad
     full.save(ROOT / "assets/_preview/sheet.png")
     print("done:", ROOT / "assets/_preview/sheet.png")
+
+    # 6-D: 벽지·프레임·로고
+    wall = scaled(wallpaper_tile().image())
+    frame = frame_final()
+    logo_c = logo_art()
+    logo = scaled(logo_c.image())
+    wall.save(ROOT / "assets/ui/wallpaper_tile.png")
+    frame.save(ROOT / "assets/ui/frame.png")
+    logo.save(ROOT / "assets/ui/logo.png")
+    screen, covered = preview_screen(wall, frame, logo)
+    screen.save(ROOT / "assets/_preview/6d_screen.png")
+    bare, _ = preview_screen(wall, frame, logo, with_frame=False)
+    bare.save(ROOT / "assets/_preview/6d_screen_no_frame.png")
+    # 로고 x6 확대 미리보기: 패널 안쪽 영역(마젠타 선) 안에 들어오는지 확인용
+    big = Image.new("RGBA", (LOGO_W * 6, LOGO_H * 6), PANEL_FILL)
+    big.alpha_composite(logo_c.image().resize((LOGO_W * 6, LOGO_H * 6), Image.NEAREST))
+    ix0, iy0, ix1, iy1 = LOGO_INNER
+    ImageDraw.Draw(big).rectangle([ix0 * 6, iy0 * 6, (ix1 + 1) * 6 - 1, (iy1 + 1) * 6 - 1], outline=(255, 0, 255, 255))
+    big.save(ROOT / "assets/_preview/6d_logo_x6.png")
+    lb = logo_bounds(logo_c)
+    inside = lb[0] >= ix0 and lb[1] >= iy0 and lb[2] <= ix1 and lb[3] <= iy1
+    print("logo bounds (art):", lb, "inner:", LOGO_INNER, "OK" if inside else "OUT OF PANEL")
+    wall_px, total = visible_wall_report(covered, frame)
+    print("visible wallpaper px: %d / %d = %.1f%%" % (wall_px, total, wall_px * 100.0 / total))
 
 
 if __name__ == "__main__":

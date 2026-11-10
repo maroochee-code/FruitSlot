@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 0.11.0 — 2026-11-10 (6-D: 마름모 벽지·기계 프레임·로고)
+
+### 추가
+- 청록 두 톤 마름모 벽지(`assets/ui/wallpaper_tile.png`, 아트 16×16 → 48×48, 타일 반복). 기존의 어두운 남색 단색 배경을 대체
+- 기계 프레임(`assets/ui/frame.png`, 640×480, 가운데 투명): 바깥 테두리 2아트px + 하단 표시창 위 가로 띠 + 왼쪽 영역/오른쪽 패널 사이 세로 띠 + 꺼진 전구 소켓 18개(6-F에서 켤 자리, 좌표는 `FRAME_BULB_SOCKETS`)
+- 로고(`assets/ui/logo.png`, 180×72): 직접 찍은 도트 글자 `maroochee` / `SLOT` 두 줄을 타이틀 패널 안쪽에 표시
+- `tools/gen_pixel_assets.py`에 벽지·프레임·로고·전체 화면 근사 미리보기(`assets/_preview/6d_*.png`) 추가
+- view_test +10: 벽지·프레임·로고 존재, 그리기 순서, 클릭 통과, 보드·STOP·AUTO·첫 릴 위치 불변
+
+### 변경
+- `Background`(ColorRect) 색을 벽지 어두운 톤(#1f6f8b)으로. 프레임 오른쪽 1px(213×3=639) 보정용
+- 기존 화면 요소의 좌표·크기, 로직, `balance.json`, `feel.json`, `project.godot`은 변경 없음
+
 ## 0.10.0 — 2026-11-10 (AUTO: 자동 스핀)
 
 ### 추가

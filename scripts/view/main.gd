@@ -47,7 +47,11 @@ const BET_RECT: Rect2 = Rect2(537, BOTTOM_Y, 93, BOTTOM_H)
 const BIG_FONT_SIZE: int = 24
 const POOL_FONT_SIZE: int = 24
 const NOTICE_FONT_SIZE: int = 12
-const BACKGROUND_COLOR: Color = Color("0C0C14")
+## 6-D: 벽지 뒤 바탕색(벽지 타일이 못 덮는 곳과 프레임 오른쪽 1px용)은 벽지 어두운 톤과 같게
+const BACKGROUND_COLOR: Color = Color("1f6f8b")
+const WALLPAPER_PATH: String = UiSkin.UI_DIR + "wallpaper_tile.png"
+const FRAME_PATH: String = UiSkin.UI_DIR + "frame.png"
+const LOGO_PATH: String = UiSkin.UI_DIR + "logo.png"
 const CREDIT_COLOR: Color = Color("7dff9a")
 const WIN_COLOR: Color = Color("ffe14d")
 ## POOL 숫자 색 3단계: 주황(기본) → 노랑(pool_yellow_from 이상) → 빨강+깜빡임(pool_red_from 이상). 기준 숫자는 feel.json
@@ -536,7 +540,22 @@ func _build_background() -> void:
 	bg.name = "Background"
 	bg.color = BACKGROUND_COLOR
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
+	# 6-D: 마름모 벽지(타일 반복) → 기계 프레임. 둘 다 다른 요소보다 뒤에 그려지고 클릭을 막지 않는다.
+	var wall: TextureRect = TextureRect.new()
+	wall.name = "Wallpaper"
+	wall.texture = load(WALLPAPER_PATH) as Texture2D
+	wall.stretch_mode = TextureRect.STRETCH_TILE
+	wall.set_anchors_preset(Control.PRESET_FULL_RECT)
+	wall.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(wall)
+	var frame: TextureRect = TextureRect.new()
+	frame.name = "Frame"
+	frame.texture = load(FRAME_PATH) as Texture2D
+	frame.set_anchors_preset(Control.PRESET_FULL_RECT)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(frame)
 
 
 func _build_board() -> void:
@@ -575,7 +594,7 @@ func _build_overlay() -> void:
 	_overlay.setup(_data, _cells, REEL_ORIGIN, CELL_SIZE, CELL_GAP)
 
 
-## 타이틀 자리: 빈 패널 틀만 (내용은 나중 단계)
+## 타이틀 칸: 패널 틀 위에 로고 그림(180×72, 배경 투명)을 올린다
 func _build_title_frame() -> void:
 	var frame: Panel = Panel.new()
 	frame.name = "Title"
@@ -583,6 +602,12 @@ func _build_title_frame() -> void:
 	frame.size = TITLE_RECT.size
 	frame.add_theme_stylebox_override("panel", UiSkin.panel_box())
 	add_child(frame)
+	var logo: TextureRect = TextureRect.new()
+	logo.name = "TitleLogo"
+	logo.texture = load(LOGO_PATH) as Texture2D
+	logo.size = TITLE_RECT.size
+	logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.add_child(logo)
 
 
 ## 릴 아래 STOP 1/2/3 버튼

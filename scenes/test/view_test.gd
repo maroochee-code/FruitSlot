@@ -45,6 +45,7 @@ func _ready() -> void:
 	_test_layout(main)
 	_test_board_layout(main)
 	_test_ui_layout(main)
+	_test_backdrop(main)
 	_test_paytable(main)
 	_test_fever_panel(main)
 	_test_pool_color(main)
@@ -174,6 +175,41 @@ func _test_board_layout(main: Control) -> void:
 		if left or right:
 			labels_ok = labels_ok and label.position.y >= 48.0 and label.position.y + 21.0 <= 300.0
 	_check(label_count > 0 and labels_ok, "라인 라벨 33×21, 보드 바깥 (왼쪽 x=6 / 오른쪽 x=396 / 위쪽 y=9)")
+
+
+## 6-D: 벽지·프레임·로고가 있고, 모든 기존 요소보다 뒤에 그려지며, 기존 요소 위치는 그대로인지
+func _test_backdrop(main: Control) -> void:
+	var wall: TextureRect = main.get_node_or_null("Wallpaper") as TextureRect
+	var frame: TextureRect = main.get_node_or_null("Frame") as TextureRect
+	var board: Control = main.get_node("Board")
+	_check(wall != null and wall.texture != null and wall.texture.get_size() == Vector2(48, 48) and wall.stretch_mode == TextureRect.STRETCH_TILE, "벽지: 48×48 타일을 반복해서 깖")
+	_check(frame != null and frame.texture != null and frame.texture.get_size() == Vector2(640, 480), "프레임: 640×480 그림")
+	if wall == null or frame == null:
+		return
+	_check(wall.get_index() == 1 and frame.get_index() == 2 and main.get_node("Background").get_index() == 0, "그리는 순서: Background < Wallpaper < Frame")
+	var behind: bool = true
+	for child: Node in main.get_children():
+		if child != main.get_node("Background") and child != wall and child != frame:
+			behind = behind and child.get_index() > frame.get_index()
+	_check(behind and board.get_index() > frame.get_index(), "벽지·프레임이 다른 모든 요소보다 뒤")
+	_check(wall.mouse_filter == Control.MOUSE_FILTER_IGNORE and frame.mouse_filter == Control.MOUSE_FILTER_IGNORE, "벽지·프레임은 클릭을 막지 않음")
+	_check(wall.size == Vector2(640, 480) and frame.size == Vector2(640, 480) and wall.position == Vector2.ZERO and frame.position == Vector2.ZERO, "벽지·프레임이 화면 전체를 덮음")
+	var logo: TextureRect = main.get_node("Title").get_node_or_null("TitleLogo") as TextureRect
+	_check(logo != null and logo.texture != null and logo.size == Vector2(180, 72) and logo.position == Vector2.ZERO and logo.texture.get_size() == Vector2(180, 72), "로고: Title 안에 180×72")
+	_check(logo != null and logo.mouse_filter == Control.MOUSE_FILTER_IGNORE, "로고는 클릭을 막지 않음")
+	var rects: Dictionary = {
+		"Board": Rect2(42, 36, 348, 276), "AutoButton": Rect2(384, 318, 60, 33),
+		"StopButton1": Rect2(60, 318, 96, 33), "StopButton2": Rect2(168, 318, 96, 33), "StopButton3": Rect2(276, 318, 96, 33),
+	}
+	var moved: bool = false
+	for node_name: String in rects:
+		var node: Control = main.get_node(node_name)
+		var rect: Rect2 = rects[node_name]
+		if node.position != rect.position or node.size != rect.size:
+			moved = true
+			print("  위치 변경: ", node_name, " ", node.position, node.size)
+	_check(not moved, "보드·STOP·AUTO 위치가 6-D 전과 동일")
+	_check((main.get_node("Reels") as Control).get_child(0).position == Vector2(54, 48), "첫 릴 위치 (54,48) 그대로")
 
 
 ## 6-C: 오른쪽 패널·하단 표시창·버튼 줄·아이콘·폰트가 목표 배치(640×480)와 맞는지, 글자가 상자 밖으로 넘치지 않는지

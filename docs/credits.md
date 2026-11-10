@@ -12,4 +12,4 @@
 - 갈무리 저장소에는 "Nintendo DS는 닌텐도의 상표이며 이 프로젝트와 무관하다"는 안내가 있다. 이 게임과는 관계없다.
 
 ## 도트 그림
-- `assets/symbols`, `assets/ui` 의 그림은 `tools/gen_pixel_assets.py`로 직접 만든 것이다. 외부 그림을 쓰지 않았다.
+- `assets/symbols`, `assets/ui` 의 그림은 `tools/gen_pixel_assets.py`로 직접 만든 것이다. 외부 그림을 쓰지 않았다. (6-D 벽지·프레임·로고의 글자 도트도 직접 찍었으며 폰트를 쓰지 않았다.)
