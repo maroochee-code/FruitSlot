@@ -38,9 +38,17 @@
 - 미리보기: `assets/_preview/6e_fever.png`, `6e_fever_seven_b.png`, `6e_pool.png`, `6e_pool_b.png`, `6e_overview.png`, `6e_coin_x6.png`
 - → 사용자 승인 대기
 
-## 6-E-2 화면 적용 (완료, F5 확인 대기)
+## 6-E-2 화면 적용 (완료·커밋됨)
 - `fever_overlay.gd`: 임시 Label/Panel → 배너(`BannerFever`/`BannerPool`)·배경(`BgFrame`)·심볼 타일·BONUS 판. 막·배경은 y 0~414만. 힌트 y≈390. 위치·프레임 수는 상수로 노출.
 - 새 `scripts/view/coin_sheet.gd`: 동전 시트 경로·프레임 크기·프레임 수·프레임 텍스처 (6-F용)
 - 새 `scenes/test/overlay_preview.tscn`: 가짜 단계(체리→포도→벨→세븐→풀)로 연출만 재생, 키로 단계·색 변형 전환
 - `docs/기획서.md` 8장 문구, `docs/진행상황.md`, `CHANGELOG.md`(v0.12.0)
 - 테스트: `shown_texts()` 값 불변, 이미지 사용, 노드 이름·크기·위치, 클릭 차단 유지, 하단 표시창 위에 막 없음, 동전 시트 크기·프레임 수, 기존 요소 위치 불변, 기존 전 테스트 통과
+
+---
+
+# 6-F 작업 계획 — 소리·BGM·전구·당첨 정산 연출 (세 번에 나눠 진행)
+- **6-F1 효과음** (구현 완료, F5 확인 대기): 합성 효과음 14개, SoundBank, 상황별 연결, feel 키 3개(`win_mid_ratio`, `win_big_ratio`, `sfx_volume_db`), 미리보기 씬
+- **6-F2 BGM**: bgm_main/bgm_fever 연결, 피버 때 전환 (BGM 반복은 임포트 옵션 변경이라 승인 필요, `bgm_volume_db` 키는 그때 승인)
+- **6-F3 전구 애니메이션, 당첨 정산 연출(WIN 카운트업·동전·크레딧), AUTO 대기 정리**
+- 결정(6-F1): 거절=cancel, AUTO 켜기·끄기=button, 피버·풀 연출 중 win_x 생략, fever_end는 자연 종료 때만, 오디오 버스는 코드 생성, BET/MAX/CANCEL은 main 래퍼로 소리 연결

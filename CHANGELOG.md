@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 0.13.0 — 2026-11-10 (6-F1: 효과음)
+
+### 추가
+- 효과음 14개를 직접 합성: `tools/gen_sounds.py`(표준 라이브러리만, 시드 고정이라 항상 같은 파일) → `assets/sounds/*.wav` (coin, bet, cancel, start, reel_spin(반복), reel_stop, win_small/mid/big, fever_start, fever_end, pool_get, button, gameover)
+- `SoundBank`(`scripts/view/sound_bank.gd`): 이름으로 효과음 재생, 재생기 8개 돌려 쓰기(겹쳐도 안 끊김), 반복음 켜기/끄기, 연출 소리 끊기, 요청 기록(테스트용), SFX·BGM 오디오 버스를 코드로 생성(`project.godot` 변경 없음)
+- 연결 지점: COIN(coin), BET·MAX BET(bet), CANCEL(cancel), 거절(cancel), START(start), 릴 회전 중(reel_spin 반복), 릴 정지마다(reel_stop), 당첨 크기별(win_small/mid/big), 피버 단계 시작(fever_start)·풀 단계 시작(pool_get)·피버 끝(fever_end), AUTO 켜기·끄기(button)
+- main.gd에 `press_bet()` / `press_max_bet()` / `press_cancel()` 래퍼(버튼·키가 같은 길을 거침, 받아들여졌을 때만 소리)
+- `feel.json` 새 키: `win_mid_ratio`(2.0), `win_big_ratio`(10.0), `sfx_volume_db`(0.0). 설명은 `docs/feel.md`
+- `scenes/test/sound_preview.tscn`: 키 하나에 소리 하나 확인용
+- view_test +49: 파일·버스·노드, 당첨 크기 경계, 상황별 요청 이름, 건너뛰기·AUTO 중 소리 정리, feel 키 검증
+
+### 변경
+- 피버·풀 연출이 있는 판에서는 당첨 크기 소리 대신 연출 소리만 남. 연출을 건너뛰면 재생 중인 소리를 끊고 마무리음(fever_end)은 없음
+- 헤드리스(화면·소리 장치 없음) 실행에서는 SoundBank가 실제 재생 없이 요청만 기록
+- 로직, GameState, balance.json, project.godot 변경 없음 (소리는 이미 정해진 결과를 알려 줄 뿐)
+
 ## 0.12.0 — 2026-11-10 (6-E: FEVER! / POOL GET! 연출 아트 + 당첨 동전)
 
 ### 추가

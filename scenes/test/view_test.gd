@@ -59,6 +59,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await _test_fever_show()
 	await _test_overlay_art()
+	await _test_sound()
 	await _test_auto_view()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
@@ -176,6 +177,219 @@ func _test_board_layout(main: Control) -> void:
 		if left or right:
 			labels_ok = labels_ok and label.position.y >= 48.0 and label.position.y + 21.0 <= 300.0
 	_check(label_count > 0 and labels_ok, "라인 라벨 33×21, 보드 바깥 (왼쪽 x=6 / 오른쪽 x=396 / 위쪽 y=9)")
+
+
+## 6-F1: 효과음 요청 (소리 자체가 아니라 "맞는 상황에 맞는 이름이 요청됐는지"를 SoundBank의 요청 기록으로 확인한다)
+func _test_sound() -> void:
+	await _test_sound_basics()
+	await _test_sound_spin()
+	await _test_sound_fever()
+	await _test_sound_auto()
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+
+
+## 요청 기록을 "a,b,c" 한 줄로
+func _sound_log(bank: SoundBank) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for entry: StringName in bank.requests():
+		parts.append(String(entry))
+	return ",".join(parts)
+
+
+func _sound_count(bank: SoundBank, sound_name: StringName) -> int:
+	return bank.requests().count(sound_name)
+
+
+func _test_sound_basics() -> void:
+	var files_ok: bool = true
+	for sound_name: StringName in SoundBank.ALL_NAMES:
+		files_ok = files_ok and ResourceLoader.exists(SoundBank.sound_path(sound_name))
+	_check(files_ok and SoundBank.ALL_NAMES.size() == 14, "효과음 파일 14개가 모두 있음 (assets/sounds/*.wav)")
+	var main: Control = await _auto_main(5, 1000, 8)
+	var bank: SoundBank = main.sound_bank()
+	_check(bank != null and main.get_node("SoundBank") == bank, "main 안에 SoundBank 노드")
+	_check(AudioServer.get_bus_index(SoundBank.BUS_SFX) != -1 and AudioServer.get_bus_index(SoundBank.BUS_BGM) != -1, "SFX / BGM 오디오 버스가 만들어짐")
+	_check(bank.get_child_count() == SoundBank.VOICES + SoundBank.LOOP_NAMES.size(), "재생기 %d개 + 반복음 재생기" % SoundBank.VOICES)
+	_check(DisplayServer.get_name() != "headless" or not bank.playback_enabled, "헤드리스에서는 실제 재생 없이 요청만 기록 (소리 장치 없이도 에러 없음)")
+	# 당첨 크기 기준 (총 지급 ÷ 총 베팅)
+	var mid: float = 2.0
+	var big: float = 10.0
+	_check(SoundBank.win_sound_for(0, 8, mid, big) == &"", "당첨 0이면 당첨 소리 없음")
+	_check(SoundBank.win_sound_for(15, 8, mid, big) == SoundBank.NAME_WIN_SMALL, "15 ÷ 8 = 1.9배 → win_small")
+	_check(SoundBank.win_sound_for(16, 8, mid, big) == SoundBank.NAME_WIN_MID, "16 ÷ 8 = 2배 → win_mid (경계 포함)")
+	_check(SoundBank.win_sound_for(79, 8, mid, big) == SoundBank.NAME_WIN_MID, "79 ÷ 8 = 9.9배 → win_mid")
+	_check(SoundBank.win_sound_for(80, 8, mid, big) == SoundBank.NAME_WIN_BIG, "80 ÷ 8 = 10배 → win_big (경계 포함)")
+	_check(SoundBank.win_sound_for(10, 0, mid, big) == SoundBank.NAME_WIN_BIG, "총 베팅 0이어도 나누기 오류 없음")
+	# COIN / BET / MAX BET / CANCEL / 거절
+	bank.clear_requests()
+	GameState.insert_coin()
+	_check(_sound_log(bank) == "coin", "COIN → coin")
+	bank.clear_requests()
+	_check(main.press_bet() and _sound_log(bank) == "bet", "BET → bet")
+	bank.clear_requests()
+	_check(main.press_max_bet() and _sound_log(bank) == "bet", "MAX BET → bet")
+	bank.clear_requests()
+	_check(not main.press_max_bet() and _sound_log(bank) == "", "이미 최대인 MAX BET은 소리 없음")
+	bank.clear_requests()
+	_check(main.press_cancel() and _sound_log(bank) == "cancel", "CANCEL → cancel")
+	bank.clear_requests()
+	_check(not main.press_cancel() and _sound_log(bank) == "", "베팅이 없을 때 CANCEL은 소리 없음")
+	bank.clear_requests()
+	_press(main, KEY_B)
+	_check(_sound_log(bank) == "bet", "B 키도 BET → bet")
+	bank.clear_requests()
+	(main.get_node("BetButton") as Button).pressed.emit()
+	_check(_sound_log(bank) == "bet", "BET 버튼 클릭도 bet")
+	bank.clear_requests()
+	GameState.credit = 0
+	_check(not main.press_bet() and _sound_log(bank) == "cancel", "크레딧 없이 BET 거절 → cancel")
+	GameState.credit = 1000
+	# 요청 기록은 오래된 것부터 버림
+	bank.clear_requests()
+	for i: int in SoundBank.LOG_MAX + 20:
+		bank.play(SoundBank.NAME_BUTTON)
+	_check(bank.requests().size() == SoundBank.LOG_MAX, "요청 기록은 최대 %d개" % SoundBank.LOG_MAX)
+	# 반복음은 한 번만 켜지고 한 번만 꺼짐
+	bank.clear_requests()
+	bank.play_loop(SoundBank.NAME_REEL_SPIN)
+	bank.play_loop(SoundBank.NAME_REEL_SPIN)
+	_check(_sound_log(bank) == "reel_spin" and bank.is_loop_on(SoundBank.NAME_REEL_SPIN), "반복음을 두 번 켜도 한 번만 시작")
+	bank.stop_loop(SoundBank.NAME_REEL_SPIN)
+	bank.stop_loop(SoundBank.NAME_REEL_SPIN)
+	_check(_sound_log(bank) == "reel_spin,reel_spin:stop" and not bank.is_loop_on(SoundBank.NAME_REEL_SPIN), "반복음을 두 번 꺼도 한 번만 정지")
+	# feel 키: 기본값·범위·중 < 대
+	var feel: FeelConfig = FeelConfig.load_from_file()
+	_check(feel.win_mid_ratio == 2.0 and feel.win_big_ratio == 10.0 and feel.sfx_volume_db == 0.0, "feel.json 새 키: win_mid_ratio 2 / win_big_ratio 10 / sfx_volume_db 0")
+	var swapped: FeelConfig = FeelConfig.from_dict({ "win_mid_ratio": 5.0, "win_big_ratio": 3.0 })
+	_check(swapped.win_mid_ratio == 2.0 and swapped.win_big_ratio == 10.0, "중 기준이 대 기준 이상이면 둘 다 기본값")
+	_check(FeelConfig.from_dict({ "sfx_volume_db": 99.0 }).sfx_volume_db == 0.0 and FeelConfig.from_dict({ "sfx_volume_db": -60.0 }).sfx_volume_db == 0.0, "sfx_volume_db 범위(-40~6) 밖은 기본값")
+	# SFX 볼륨은 스핀 시작 때 새 설정으로 적용
+	main.set_feel_path(FEEL_TEMP_PATH)
+	_write_feel_file(FEEL_TEMP_PATH, { "sfx_volume_db": -6.0 })
+	main.reload_feel()
+	GameState.credit = 1000
+	main.press_bet()
+	main.do_spin()
+	_check(is_equal_approx(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(SoundBank.BUS_SFX)), -6.0), "sfx_volume_db가 SFX 버스에 적용됨 (다음 스핀부터)")
+	_settle(main)
+	_write_feel_file(FEEL_TEMP_PATH, {})
+	main.reload_feel()
+	main.set_feel_path(FeelConfig.DEFAULT_PATH)
+	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(SoundBank.BUS_SFX), 0.0)
+	main.free()
+	await get_tree().process_frame
+
+
+## 피버·풀 없는 한 판: start → 회전음 → 릴 정지 ×3 → 회전음 끝 → (당첨이면) 크기별 당첨음
+func _test_sound_spin() -> void:
+	var win_seed: int = _sound_find_plain_win_seed()
+	var lose_seed: int = _auto_find_seed(1000, 8, false)
+	_check(win_seed > 0 and lose_seed > 0, "일반 당첨·무당첨 시드를 찾음")
+	if win_seed <= 0 or lose_seed <= 0:
+		return
+	var main: Control = await _auto_main(lose_seed, 1000, 8)
+	var bank: SoundBank = main.sound_bank()
+	bank.clear_requests()
+	main.do_spin()
+	_advance_for(main, 1.0)
+	_check(bank.is_loop_on(SoundBank.NAME_REEL_SPIN), "릴이 도는 동안 회전음이 켜져 있음")
+	_settle(main)
+	_check(not bank.is_loop_on(SoundBank.NAME_REEL_SPIN), "릴이 모두 멈추면 회전음이 꺼짐")
+	_check(GameState.last_win == 0 and _sound_log(bank) == "start,reel_spin,reel_stop,reel_stop,reel_stop,reel_spin:stop", "무당첨: start → 회전음 → 릴 정지 ×3 → 회전음 끝, 당첨음 없음 (%s)" % _sound_log(bank))
+	main.free()
+	await get_tree().process_frame
+	main = await _auto_main(win_seed, 1000, 8)
+	bank = main.sound_bank()
+	bank.clear_requests()
+	main.do_spin()
+	_settle(main)
+	var feel: FeelConfig = main.feel()
+	var want: StringName = SoundBank.win_sound_for(GameState.last_win, 8, feel.win_mid_ratio, feel.win_big_ratio)
+	_check(GameState.last_win > 0 and want != &"", "당첨 판 (WIN %d)" % GameState.last_win)
+	_check(_sound_log(bank) == "start,reel_spin,reel_stop,reel_stop,reel_stop,reel_spin:stop,%s" % want, "일반 당첨: 마지막에 크기에 맞는 당첨음 %s (%s)" % [want, _sound_log(bank)])
+	main.free()
+	await get_tree().process_frame
+
+
+## 첫 판이 일반 당첨(라인만, 피버·풀 없음)인 시드
+func _sound_find_plain_win_seed() -> int:
+	for candidate: int in range(1, 400):
+		GameState.initialize(GameState.get_balance(), GameState.load_economy(), candidate)
+		GameState.credit = 1000
+		while GameState.bet != 8:
+			GameState.raise_bet()
+		var result: SpinResult = GameState.play_spin()
+		if result.total_payout() > 0 and result.fever_triggers.is_empty() and result.pool_won == 0:
+			return candidate
+	return -1
+
+
+## 피버: 단계마다 fever_start (풀 단계는 pool_get), 끝까지 보면 fever_end, 당첨음은 없음. 건너뛰면 한꺼번에 오는 단계 알림에 소리가 쌓이지 않고 연출 소리를 끊음.
+func _test_sound_fever() -> void:
+	var data: BalanceData = _fever_test_data()
+	var multi_n: int = _find_fever_spin(data, 2)
+	var pool_n: int = _find_pool_spin(data)
+	_check(multi_n >= 0 and pool_n >= 0, "소리 시험용 피버 2개 스핀·풀 획득 스핀을 찾음")
+	if multi_n < 0 or pool_n < 0:
+		return
+	for n: int in [multi_n, pool_n]:
+		var main: Control = await _fever_world(data, n)
+		var bank: SoundBank = main.sound_bank()
+		var overlay: FeverOverlay = main.get_node("FeverOverlay")
+		bank.clear_requests()
+		main.do_spin()
+		_settle(main)
+		var fever_steps: int = 0
+		var pool_steps: int = 0
+		for i: int in overlay.step_count():
+			if overlay.step_at(i)["kind"] == FeverOverlay.KIND_POOL:
+				pool_steps += 1
+			else:
+				fever_steps += 1
+		var tag: String = "풀 획득 스핀" if n == pool_n else "피버 2개 스핀"
+		_check(_sound_count(bank, SoundBank.NAME_FEVER_START) == fever_steps and _sound_count(bank, SoundBank.NAME_POOL_GET) == pool_steps, "%s: 단계마다 fever_start %d / pool_get %d (%s)" % [tag, fever_steps, pool_steps, _sound_log(bank)])
+		_check(_sound_count(bank, SoundBank.NAME_FEVER_END) == 1 and bank.requests()[bank.requests().size() - 1] == SoundBank.NAME_FEVER_END, "%s: 끝까지 보면 마지막에 fever_end 한 번" % tag)
+		_check(_sound_count(bank, SoundBank.NAME_WIN_SMALL) + _sound_count(bank, SoundBank.NAME_WIN_MID) + _sound_count(bank, SoundBank.NAME_WIN_BIG) == 0, "%s: 연출이 있으면 당첨 크기 소리는 생략" % tag)
+		main.free()
+		await get_tree().process_frame
+	# 건너뛰기
+	var skip_main: Control = await _fever_world(data, multi_n)
+	var skip_bank: SoundBank = skip_main.sound_bank()
+	skip_bank.clear_requests()
+	skip_main.do_spin()
+	_check(_advance_to_fever(skip_main), "건너뛰기 시험: 피버 연출 시작")
+	skip_main.advance(0.6)
+	var before: int = _sound_count(skip_bank, SoundBank.NAME_FEVER_START)
+	skip_main.do_spin()
+	_check(not skip_main.fever_playing() and not GameState.spinning, "건너뛰기: 연출 종료 + 정산")
+	_check(before == 1 and _sound_count(skip_bank, SoundBank.NAME_FEVER_START) == 1 and _sound_count(skip_bank, SoundBank.NAME_POOL_GET) == 0, "건너뛰어도 남은 단계의 fever_start가 쌓이지 않음 (%s)" % _sound_log(skip_bank))
+	_check(_sound_count(skip_bank, SoundBank.CUT_MARK) == 1 and _sound_count(skip_bank, SoundBank.NAME_FEVER_END) == 0, "건너뛰면 연출 소리를 끊고(cut) 마무리음은 없음")
+	skip_main.free()
+	await get_tree().process_frame
+
+
+## AUTO: 켜기·끄기만 button, 판이 이어져도 판마다 start와 회전음은 매번 나고 button은 쌓이지 않음
+func _test_sound_auto() -> void:
+	var main: Control = await _auto_main(7, 5000, 8)
+	var bank: SoundBank = main.sound_bank()
+	bank.clear_requests()
+	GameState.toggle_auto()
+	_check(_sound_log(bank).begins_with("button,start") and _sound_count(bank, SoundBank.NAME_BUTTON) == 1, "AUTO 켜기 → button (쉬는 중이면 바로 첫 판이 시작되어 start가 이어짐)")
+	bank.clear_requests()
+	var frames: int = 0
+	while GameState.auto_count() < 3 and frames < 20000:
+		main.advance(FRAME_DT)
+		frames += 1
+	_check(GameState.auto_count() >= 3, "AUTO로 판이 이어짐 (%d회)" % GameState.auto_count())
+	_check(_sound_count(bank, SoundBank.NAME_BUTTON) == 0, "AUTO 중 판이 시작될 때마다 button이 울리지 않음")
+	var starts: int = _sound_count(bank, SoundBank.NAME_START)
+	_check(starts >= 2 and _sound_count(bank, SoundBank.NAME_REEL_SPIN) >= starts - 1, "판마다 start와 회전음이 매번 남 (start %d / 회전음 %d)" % [starts, _sound_count(bank, SoundBank.NAME_REEL_SPIN)])
+	bank.clear_requests()
+	GameState.toggle_auto()
+	_check(_sound_log(bank) == "button", "AUTO 끄기 → button")
+	_settle(main)
+	main.free()
+	await get_tree().process_frame
 
 
 ## 6-E: 피버·풀 오버레이가 새 그림(배경·배너·심볼 칸·동전)과 정해 둔 위치·크기로 만들어졌는지, 단계마다 맞는 것만 보이는지

@@ -18,5 +18,8 @@
 	"fever_skip_lock_sec": 0.4,
 	"pool_overlay_sec": 3.0,
 	"pool_yellow_from": 1000,
-	"pool_red_from": 1500
+	"pool_red_from": 1500,
+	"win_mid_ratio": 2.0,
+	"win_big_ratio": 10.0,
+	"sfx_volume_db": 0.0
 }

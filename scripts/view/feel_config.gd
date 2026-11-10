@@ -24,6 +24,9 @@ const SPECS: Dictionary = {
 	"pool_overlay_sec": [3.0, 0.2, 10.0],
 	"pool_yellow_from": [1000.0, 0.0, 1000000000.0],
 	"pool_red_from": [1500.0, 0.0, 1000000000.0],
+	"win_mid_ratio": [2.0, 0.1, 1000.0],
+	"win_big_ratio": [10.0, 0.1, 1000.0],
+	"sfx_volume_db": [0.0, -40.0, 6.0],
 }
 ## 릴 수만큼 값이 들어가는 항목. 키: [기본값 목록, 최솟값, 최댓값]
 const REEL_COUNT: int = 3
@@ -74,6 +77,11 @@ var pool_overlay_sec: float = 3.0
 var pool_yellow_from: float = 1000.0
 ## POOL 숫자가 이 값 이상이면 빨강 + 가벼운 깜빡임. pool_yellow_from보다 커야 한다.
 var pool_red_from: float = 1500.0
+## 당첨 효과음 기준: (총 지급 ÷ 총 베팅)이 이 값 이상이면 중, win_big_ratio 이상이면 대 (미만이면 소). 중 < 대여야 한다.
+var win_mid_ratio: float = 2.0
+var win_big_ratio: float = 10.0
+## 효과음(SFX 버스) 볼륨 (dB, 0 = 원래 크기). 다음 스핀부터 적용
+var sfx_volume_db: float = 0.0
 ## 파일에서 읽다가 문제가 있어 기본값으로 대체한 항목 설명
 var errors: PackedStringArray = PackedStringArray()
 ## 파일을 읽고 JSON으로 해석하는 데 성공했는지 (항목별 범위 문제와는 별개)
@@ -120,6 +128,7 @@ func _read(raw: Dictionary) -> void:
 		set(key, _read_array(raw, key))
 	_check_delay_before_auto_stop()
 	_check_pool_tiers()
+	_check_win_tiers()
 
 
 ## 릴 수만큼의 숫자 목록을 읽는다. 개수가 다르거나 하나라도 범위 밖이면 목록 전체를 기본값으로 쓴다.
@@ -160,6 +169,15 @@ func _check_pool_tiers() -> void:
 	errors.append("pool_yellow_from(%s)가 pool_red_from(%s)보다 작아야 해서 둘 다 기본값 사용" % [pool_yellow_from, pool_red_from])
 	pool_yellow_from = SPECS["pool_yellow_from"][0]
 	pool_red_from = SPECS["pool_red_from"][0]
+
+
+## 중 기준이 대 기준 이상이면 소/중/대가 성립하지 않으므로 둘 다 기본값으로 돌린다.
+func _check_win_tiers() -> void:
+	if win_mid_ratio < win_big_ratio:
+		return
+	errors.append("win_mid_ratio(%s)가 win_big_ratio(%s)보다 작아야 해서 둘 다 기본값 사용" % [win_mid_ratio, win_big_ratio])
+	win_mid_ratio = SPECS["win_mid_ratio"][0]
+	win_big_ratio = SPECS["win_big_ratio"][0]
 
 
 func _longest_delay() -> float:

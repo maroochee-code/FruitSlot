@@ -111,6 +111,12 @@ var _max_bet_button: Button
 var _cancel_button: Button
 var _start_button: Button
 var _auto_button: Button
+## 효과음 (6-F1). 소리는 이미 정해진 결과를 알려 주기만 한다.
+var _sound: SoundBank
+## 피버 연출을 건너뛰는 중인지 (건너뛸 때 한꺼번에 나가는 단계 시작 알림에는 소리를 내지 않는다)
+var _skipping_fever: bool = false
+## 소리를 낼 때 쓰는 "AUTO가 켜져 있던가" (판마다 오는 auto_changed에는 소리를 내지 않는다)
+var _auto_sound_on: bool = false
 
 
 func _ready() -> void:
@@ -131,6 +137,7 @@ func _ready() -> void:
 	_build_buttons()
 	_build_stop_buttons()
 	_build_debug()
+	_build_sound()
 	_connect_state()
 	GameState.refresh()
 	_refresh_side_panel(GameState.get_pool(), GameState.get_fever_counts())
@@ -206,11 +213,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		KEY_C:
 			GameState.insert_coin()
 		KEY_B:
-			GameState.raise_bet()
+			press_bet()
 		KEY_M:
-			GameState.max_bet()
+			press_max_bet()
 		KEY_X:
-			GameState.cancel_bet()
+			press_cancel()
 		KEY_A:
 			GameState.toggle_auto()
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
@@ -227,12 +234,43 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reload_feel()
 
 
+## BET +1 (버튼·B 키). 받아들여지면 true이고 BET 소리가 난다. 거절은 GameState의 action_rejected로 알려진다.
+func press_bet() -> bool:
+	var accepted: bool = GameState.raise_bet()
+	if accepted:
+		_sound.play(SoundBank.NAME_BET)
+	return accepted
+
+
+## MAX BET (버튼·M 키)
+func press_max_bet() -> bool:
+	var accepted: bool = GameState.max_bet()
+	if accepted:
+		_sound.play(SoundBank.NAME_BET)
+	return accepted
+
+
+## CANCEL (버튼·X 키)
+func press_cancel() -> bool:
+	var accepted: bool = GameState.cancel_bet()
+	if accepted:
+		_sound.play(SoundBank.NAME_CANCEL)
+	return accepted
+
+
+## 효과음 도우미 (테스트용)
+func sound_bank() -> SoundBank:
+	return _sound
+
+
 ## START. 멈춰 있으면 크레딧 차감 + 결과 확정(GameState), 릴이 돌고 있으면 남은 릴을 차례로 정지시킨다.
 ## 새 스핀이 시작됐을 때만 결과를 돌려준다.
 func do_spin() -> SpinResult:
 	# 피버 연출 중 START(스페이스)는 연출 건너뛰기. 숫자는 연출이 끝날 때 똑같이 반영된다.
 	if _fever_overlay.is_playing():
+		_skipping_fever = true
 		_fever_overlay.skip()
+		_skipping_fever = false
 		return null
 	if GameState.spinning:
 		if _spin.press_quick_stop():
@@ -355,7 +393,11 @@ func _on_win_changed(win: int) -> void:
 	_win_box.set_value(str(win))
 
 
-func _on_auto_changed(_enabled: bool, _count: int) -> void:
+func _on_auto_changed(enabled: bool, _count: int) -> void:
+	# 켜짐/꺼짐이 바뀔 때만 소리 (켜진 동안 판이 시작될 때마다도 이 시그널이 온다)
+	if enabled != _auto_sound_on:
+		_auto_sound_on = enabled
+		_sound.play(SoundBank.NAME_BUTTON)
 	_apply_auto_skin()
 	_refresh_buttons()
 	_refresh_notice()
@@ -372,9 +414,11 @@ func _on_auto_stopped(reason: StringName) -> void:
 
 func _on_coin_inserted(_amount: int) -> void:
 	_notice_override = ""
+	_sound.play(SoundBank.NAME_COIN)
 
 
 func _on_action_rejected(reason: StringName) -> void:
+	_sound.play(SoundBank.NAME_CANCEL)
 	if reason == GameState.REASON_NO_CREDIT:
 		_notice_override = "크레딧이 없습니다. COIN(C)을 누르세요."
 	elif reason == GameState.REASON_NO_BET:
@@ -393,6 +437,8 @@ func _on_spin_started(result: SpinResult) -> void:
 	_settling = false
 	# 새 손맛 설정은 여기서만 받아들인다. 이 스핀은 끝까지 이 설정 한 벌로 움직인다.
 	_feel = _latest_feel
+	_sound.set_sfx_volume_db(_feel.sfx_volume_db)
+	_sound.play(SoundBank.NAME_START)
 	GameState.auto_gap_sec = _feel.auto_spin_gap_sec
 	_spin.begin(result.stops, _feel)
 	_refresh_buttons()
@@ -401,16 +447,19 @@ func _on_spin_started(result: SpinResult) -> void:
 
 ## 릴이 출발하면 그 릴의 STOP 버튼이 켜진다 (출발 지연 중에는 꺼져 있음)
 func _on_reel_started(_index: int) -> void:
+	_sound.play_loop(SoundBank.NAME_REEL_SPIN)
 	_refresh_buttons()
 
 
 func _on_reel_stopped(index: int) -> void:
+	_sound.play(SoundBank.NAME_REEL_STOP)
 	_reels[index].refresh()
 	_refresh_buttons()
 
 
 ## 세 릴이 모두 멈춤: 잠시 뒤(result_delay) 정산하고 당첨 연출을 시작한다.
 func _on_all_stopped() -> void:
+	_sound.stop_loop(SoundBank.NAME_REEL_SPIN)
 	_settle_left = _feel.result_delay
 	_settling = true
 	if _settle_left <= 0.0:
@@ -425,6 +474,10 @@ func _settle_now() -> void:
 	_wins_shown = true
 	_fever_steps = FeverOverlay.build_steps(_last_result, _data)
 	if _fever_steps.is_empty():
+		# 피버·풀 연출이 없을 때만 당첨 크기 소리 (연출이 있으면 연출 소리가 당첨 소리다)
+		var win_name: StringName = SoundBank.win_sound_for(_last_result.total_payout(), _last_result.total_bet, _feel.win_mid_ratio, _feel.win_big_ratio)
+		if win_name != &"":
+			_sound.play(win_name)
 		GameState.settle_spin()
 		return
 	_start_fever_show()
@@ -457,7 +510,20 @@ func _on_fever_step_finished(index: int) -> void:
 	_fever_panel.set_counts(_fever_counts_shown)
 
 
-func _on_fever_finished(_skipped: bool) -> void:
+## 피버 단계가 시작될 때 소리. 건너뛰는 중에 한꺼번에 오는 알림은 무시한다.
+func _on_fever_step_started(index: int) -> void:
+	if _skipping_fever:
+		return
+	var is_pool: bool = _fever_steps[index]["kind"] == FeverOverlay.KIND_POOL
+	_sound.play(SoundBank.NAME_POOL_GET if is_pool else SoundBank.NAME_FEVER_START)
+
+
+func _on_fever_finished(skipped: bool) -> void:
+	# 건너뛰면 재생 중인 연출 소리를 끊고 마무리음도 없다. 끝까지 봤을 때만 마무리음.
+	if skipped:
+		_sound.cut_oneshots()
+	else:
+		_sound.play(SoundBank.NAME_FEVER_END)
 	GameState.settle_spin()
 
 
@@ -653,15 +719,15 @@ func _build_buttons() -> void:
 	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(strip)
 	_cancel_button = _make_row_button("CancelButton", "CANCEL", 0)
-	_cancel_button.pressed.connect(GameState.cancel_bet)
+	_cancel_button.pressed.connect(press_cancel)
 	var coin: Button = _make_row_button("CoinButton", "COIN", 1)
 	coin.pressed.connect(GameState.insert_coin)
 	_start_button = _make_row_button("StartButton", "START", 2)
 	_start_button.pressed.connect(do_spin)
 	_bet_button = _make_row_button("BetButton", "BET", 3)
-	_bet_button.pressed.connect(GameState.raise_bet)
+	_bet_button.pressed.connect(press_bet)
 	_max_bet_button = _make_row_button("MaxBetButton", "MAX BET", 4)
-	_max_bet_button.pressed.connect(GameState.max_bet)
+	_max_bet_button.pressed.connect(press_max_bet)
 
 
 func _make_row_button(node_name: String, text: String, slot: int) -> Button:
@@ -697,6 +763,13 @@ func _make_button(node_name: String, text: String, rect: Rect2) -> Button:
 	return button
 
 
+## 효과음 도우미. 다른 요소와 상관없는 Node라 그리기 순서·좌표에 영향이 없다.
+func _build_sound() -> void:
+	_sound = SoundBank.new()
+	add_child(_sound)
+	_sound.set_sfx_volume_db(_feel.sfx_volume_db)
+
+
 func _build_debug() -> void:
 	_debug = DebugPanel.new()
 	_debug.name = "DebugPanel"
@@ -708,5 +781,6 @@ func _build_debug() -> void:
 	# 피버 오버레이는 가장 위(디버그 창보다도 위)에 둔다
 	_fever_overlay = FeverOverlay.new()
 	add_child(_fever_overlay)
+	_fever_overlay.step_started.connect(_on_fever_step_started)
 	_fever_overlay.step_finished.connect(_on_fever_step_finished)
 	_fever_overlay.finished.connect(_on_fever_finished)
