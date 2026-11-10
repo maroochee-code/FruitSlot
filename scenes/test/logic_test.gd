@@ -26,6 +26,10 @@ func _ready() -> void:
 	_test_multiple_fever_symbols_one_spin()
 	_test_pool_accumulates_and_awards()
 	_test_pool_not_awarded_below_full_bet()
+	_test_fever_bonus_average_bet()
+	_test_fever_bonus_basis_setting()
+	_test_theory_hand_checked()
+	_test_theory_matches_logic()
 	print("==================== LOGIC TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	# 화면 없이(--headless) 실행할 때만 종료한다. 에디터·MCP 실행은 창을 열어 둔다.
 	if DisplayServer.get_name() == "headless":
@@ -215,6 +219,111 @@ func _test_pool_not_awarded_below_full_bet() -> void:
 	var result: SpinResult = logic.resolve_stops(PackedInt32Array([3, 3, 3]), 4)
 	_check(result.pool_won == 0 and result.fever_bonus == 0, "BET 4 세븐 → 피버·풀 없음")
 	_check(logic.get_pool() == 500, "BET 4도 풀 적립: 500 + 0.2 → 표시 500")
+
+
+## 체리 카운터(5)를 주어진 베팅 순서로 줄여 발동시키고, 마지막 판의 결과를 돌려준다.
+func _cherry_fever_with(logic: SlotLogic, bet_list: Array[int]) -> SpinResult:
+	var result: SpinResult
+	for bet: int in bet_list:
+		result = logic.resolve_stops(PackedInt32Array([0, 0, 0]), bet)
+	return result
+
+
+func _test_fever_bonus_average_bet() -> void:
+	var logic: SlotLogic = _new_logic()
+	var mixed: SpinResult = _cherry_fever_with(logic, [8, 8, 8, 8, 64])
+	_check(mixed.fever_triggers == PackedStringArray([C]) and mixed.fever_bonuses[C] == 384, "베팅 8,8,8,8,64 → 보너스 = 20 × 평균 19.2 = 384 (발동 판 베팅 64 기준 1280이 아님)")
+	var next: SpinResult = _cherry_fever_with(logic, [8, 8, 8, 8, 8])
+	_check(next.fever_bonuses[C] == 160, "발동 뒤에는 베팅 합이 0부터 다시 쌓임 (8 × 5판 → 160)")
+	var fixed: SpinResult = _cherry_fever_with(_new_logic(), [16, 16, 16, 16, 16])
+	_check(fixed.fever_bonuses[C] == 320, "같은 베팅 16으로만 치면 기존과 같은 20 × 16 = 320")
+	var floored: SpinResult = _cherry_fever_with(_new_logic(), [8, 8, 8, 8, 9])
+	_check(floored.fever_bonuses[C] == 164, "베팅 합 41 → 20 × 41 ÷ 5 = 164 (소수점 버림)")
+	var skipped: SpinResult = _cherry_fever_with(_new_logic(), [8, 8, 7, 8, 8, 8])
+	_check(skipped.fever_bonuses[C] == 160, "BET 7 판은 카운터도 평균도 건드리지 않음 → 160")
+	var lowered: SpinResult = _cherry_fever_with(_new_logic(), [64, 64, 64, 64, 8])
+	_check(lowered.fever_bonuses[C] == 1056, "베팅 64,64,64,64,8 → 20 × 264 ÷ 5 = 1056 (낮춰 쳐도 손해 없음)")
+
+
+func _test_fever_bonus_basis_setting() -> void:
+	_check(BalanceData.from_dict(_test_dict()).fever_bonus_bet_basis == "average", "bonus_bet_basis가 없으면 기본값 average")
+	var trigger_dict: Dictionary = _test_dict()
+	trigger_dict["fever"]["bonus_bet_basis"] = "trigger"
+	var trigger: SpinResult = _cherry_fever_with(SlotLogic.new(BalanceData.from_dict(trigger_dict), 1), [8, 8, 8, 8, 64])
+	_check(trigger.fever_bonuses[C] == 1280, "trigger로 두면 발동한 판의 베팅 기준 (20 × 64 = 1280)")
+	var bad_dict: Dictionary = _test_dict()
+	bad_dict["fever"]["bonus_bet_basis"] = "아무거나"
+	var bad: BalanceData = BalanceData.from_dict(bad_dict)
+	_check(bad != null and bad.fever_bonus_bet_basis == "average" and bad.warnings.size() == 1, "허용하지 않는 값은 기본값 average로 대체하고 경고 1건")
+	_check(BalanceData.from_dict(_test_dict()).warnings.is_empty(), "정상 데이터는 경고 없음")
+
+
+## 손으로 검산하는 작은 데이터: 릴 3개 × 2칸(체리, 오렌지), 보이는 줄 1, 라인 1개 → 조합 8가지.
+## 체리 3개 1가지(배당 4), 오렌지 3개 1가지(배당 8).
+func _tiny_dict() -> Dictionary:
+	return {
+		"version": "tiny",
+		"reel_count": 3,
+		"visible_rows": 1,
+		"symbols": [{ "id": C }, { "id": O }],
+		"paytable": { C: 4, O: 8 },
+		"reels": [[C, O], [C, O], [C, O]],
+		"lines": [{ "id": "A", "type": "horizontal", "cells": [[0, 0], [1, 0], [2, 0]] }],
+		"bet": { "max_total": 4 },
+		"fever": {
+			"min_total_bet": 1,
+			"targets": [
+				{ "symbol": C, "initial_count": 2, "bonus_multiplier": 3 },
+				{ "symbol": O, "initial_count": 1, "bonus_multiplier": 0 },
+			],
+		},
+		"pool": { "initial": 16, "contribution_rate": 0.5, "min_total_bet": 2, "award_on_fever": O },
+	}
+
+
+func _near(a: float, b: float) -> bool:
+	return absf(a - b) < 0.0001
+
+
+func _test_theory_hand_checked() -> void:
+	var theory: BalanceTheory = BalanceTheory.new(BalanceData.from_dict(_tiny_dict()))
+	var one: BalanceTheory.Report = theory.compute(1)
+	_check(_near(one.line_rtp, 150.0), "이론값: 라인 RTP = (4 + 8) ÷ 8 = 150%")
+	_check(_near(one.hit_rate, 25.0), "이론값: 히트 빈도 = 2 ÷ 8 = 25%")
+	_check(_near(one.fever_intervals[C], 16.0) and _near(one.fever_rtps[C], 18.75), "이론값: 체리 피버 = 카운트 2 × 8스핀 = 16스핀에 1회, RTP 3 ÷ 16 = 18.75%")
+	_check(_near(one.fever_interval, 16.0 / 3.0), "이론값: 피버 전체 간격 = 1 ÷ (1/16 + 1/8) = 5.33스핀")
+	_check(_near(one.pool_interval, 0.0) and _near(one.pool_rtp, 0.0) and _near(one.rtp, 168.75), "이론값: BET 1은 풀 최소 베팅(2) 미만 → 풀 없음, RTP 168.75%")
+	var two: BalanceTheory.Report = theory.compute(2)
+	_check(_near(two.pool_interval, 8.0) and _near(two.pool_average, 24.0), "이론값: BET 2 풀 = 8스핀에 1회, 평균 16 + 0.5 × 2 × 8 = 24")
+	_check(_near(two.pool_rtp, 150.0) and _near(two.rtp, 318.75), "이론값: BET 2 풀 RTP = 24 ÷ 16 = 150%, 합계 318.75%")
+
+
+## 8라인 테스트 데이터(조합 1000가지)에서 SlotLogic으로 직접 센 값과 이론값이 같아야 한다.
+func _test_theory_matches_logic() -> void:
+	var data: BalanceData = BalanceData.from_dict(_test_dict())
+	var theory: BalanceTheory = BalanceTheory.new(data)
+	for bet: int in [3, FULL_BET, 11]:
+		var counted: Vector2 = _count_with_logic(data, bet)
+		var report: BalanceTheory.Report = theory.compute(bet)
+		_check(_near(report.line_rtp, counted.x) and _near(report.hit_rate, counted.y), "이론값 = SlotLogic 전수 집계 (BET %d: 라인 RTP %.2f%%, 히트 %.2f%%)" % [bet, counted.x, counted.y])
+
+
+## 모든 정지 조합을 SlotLogic 판정으로 직접 센다. x = 라인 RTP(%), y = 히트 빈도(%)
+func _count_with_logic(data: BalanceData, bet: int) -> Vector2:
+	var logic: SlotLogic = SlotLogic.new(data, 1)
+	var line_bets: PackedInt32Array = logic.distribute_bet(bet)
+	var size: int = data.reels[0].size()
+	var payout: int = 0
+	var hits: int = 0
+	for index: int in size * size * size:
+		@warning_ignore("integer_division")
+		var stops: PackedInt32Array = PackedInt32Array([index % size, (index / size) % size, index / (size * size)])
+		var wins: Array[LineWin] = logic.evaluate_lines(logic.build_grid(stops), line_bets)
+		hits += 1 if not wins.is_empty() else 0
+		for win: LineWin in wins:
+			payout += win.payout
+	var combos: float = float(size * size * size)
+	return Vector2(100.0 * payout / (combos * bet), 100.0 * hits / combos)
 
 
 func _check(condition: bool, label: String) -> void:

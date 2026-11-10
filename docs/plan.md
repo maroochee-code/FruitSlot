@@ -53,3 +53,27 @@
 - **6-F3a 전구** (구현 완료 v0.15.0, F5 확인 대기): bulbs.png, BulbPattern/FrameBulbs, BoardView 개조, feel 키 4개, `bulb_preview.tscn`
 - **6-F3b 정산 연출 + AUTO** (구현 완료 v0.16.0, F5 확인 대기): WIN 카운트업·동전·크레딧·틱 소리, AUTO 대기 정리. 결정: START = 확정 + 다음 판 시작, 동전은 포물선, 테스트 main 생성 지점에서만 `settle_presentation=false`, AUTO 대기 연장은 view 쪽(`auto_gap_sec` 조정 + `auto_advance` 앞당김), `tick.wav` 추가(동전 도착 소리는 tick 재사용)
 - 결정(6-F1): 거절=cancel, AUTO 켜기·끄기=button, 피버·풀 연출 중 win_x 생략, fever_end는 자연 종료 때만, 오디오 버스는 코드 생성, BET/MAX/CANCEL은 main 래퍼로 소리 연결
+
+---
+
+# 7-A 작업 계획 — 밸런스 2차 조정 (구현 완료 v0.17.0, 사용자 확인 대기)
+
+## 결정 사항 (사용자 승인)
+- 조정안 **C**: 체리 피버 카운트 20→24·배수 11→14, 풀 초기값 500→250, 적립률 5%→6%. 릴 스트립·배당표 불변
+- 피버 보너스 = 카운터를 줄인 판들의 평균 베팅 × 배수. `fever.bonus_bet_basis`(기본 `"average"`, 허용 `"trigger"`/`"average"`, 그 밖은 기본값)
+- RTP 목표는 BET 8~64. BET 1~7과 풀 색 기준(1,000 / 1,500)은 이번에 바꾸지 않음
+- 합격 판정은 이론값(전수 계산), 10만 회 시뮬레이션은 교차 확인용(표본 오차 약 ±1.9%p)
+- 화면·소리·연출 불변, 새 feel.json 키 없음, 커밋은 사용자 승인 후
+
+## 진행
+1. (완료) `sim.gd`·`sim_stats.gd`: BET 일괄 실행, 당첨 크기 분포, 이론값, 섞어 치기, 밸런스 검사
+2. (완료) `balance.json` v0.3
+3. (완료) `slot_logic.gd`·`balance_data.gd`: 평균 베팅 보너스 / 새 파일 `balance_theory.gd`
+4. (완료) logic_test +20
+5. (완료) 재측정: 10만 회(시드 12345), 300만 회(시드 777)
+6. (완료) 문서: 기획서 7~10장, CHANGELOG, 진행상황, decisions
+
+## 남은 결정
+- 8의 배수가 아닌 BET(10~14, 21)의 RTP 95% 초과 처리: 릴 스트립으로 세로 라인 강화 / 허용 / 베팅 단위 변경 중 선택
+- "풀베팅(8)" 표현 정리(목록은 진행상황.md)
+- `data/balance_bak2.json`, `data/feel_bak.json` 정리 여부

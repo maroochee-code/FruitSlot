@@ -1,5 +1,5 @@
 {
-	"version": "0.2",
+	"version": "0.3",
 	"reel_count": 3,
 	"visible_rows": 3,
 	"symbols": [
@@ -55,8 +55,9 @@
 	},
 	"fever": {
 		"min_total_bet": 8,
+		"bonus_bet_basis": "average",
 		"targets": [
-			{ "symbol": "CHERRY", "initial_count": 20, "bonus_multiplier": 11 },
+			{ "symbol": "CHERRY", "initial_count": 24, "bonus_multiplier": 14 },
 			{ "symbol": "GRAPE", "initial_count": 4, "bonus_multiplier": 30 },
 			{ "symbol": "BELL", "initial_count": 3, "bonus_multiplier": 50 },
 			{ "symbol": "SEVEN", "initial_count": 1, "bonus_multiplier": 100 }
@@ -66,8 +67,8 @@
 		"stop_on_win_at": 0
 	},
 	"pool": {
-		"initial": 500,
-		"contribution_rate": 0.05,
+		"initial": 250,
+		"contribution_rate": 0.06,
 		"min_total_bet": 8,
 		"award_on_fever": "SEVEN"
 	}

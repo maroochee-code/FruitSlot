@@ -12,6 +12,8 @@ const POOL_SCALE: int = 10000
 var _data: BalanceData
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var _fever_counts: Dictionary[String, int] = {}
+## 심볼별로, 이번 카운터를 줄인 판들의 총 베팅 합 (평균 베팅 방식 보너스 계산용)
+var _fever_bet_sums: Dictionary[String, int] = {}
 ## 풀 금액 × POOL_SCALE
 var _pool_units: int = 0
 
@@ -29,8 +31,10 @@ func set_seed(rng_seed: int) -> void:
 ## 피버 카운터와 풀을 초기값으로 되돌린다.
 func reset_state() -> void:
 	_fever_counts.clear()
+	_fever_bet_sums.clear()
 	for symbol: String in _data.fever_symbols:
 		_fever_counts[symbol] = _data.fever_initial_counts[symbol]
+		_fever_bet_sums[symbol] = 0
 	_pool_units = _data.pool_initial * POOL_SCALE
 
 
@@ -155,6 +159,7 @@ func _apply_fever(result: SpinResult) -> void:
 			continue
 		result.fever_hits.append(symbol)
 		_fever_counts[symbol] -= 1
+		_fever_bet_sums[symbol] += result.total_bet
 		if _fever_counts[symbol] > 0:
 			continue
 		_trigger_fever(result, symbol)
@@ -162,13 +167,24 @@ func _apply_fever(result: SpinResult) -> void:
 
 func _trigger_fever(result: SpinResult, symbol: String) -> void:
 	result.fever_triggers.append(symbol)
-	var bonus: int = _data.fever_multipliers[symbol] * result.total_bet
+	var bonus: int = _fever_bonus_amount(symbol, result.total_bet)
 	result.fever_bonuses[symbol] = bonus
 	result.fever_bonus += bonus
 	_fever_counts[symbol] = _data.fever_initial_counts[symbol]
+	_fever_bet_sums[symbol] = 0
 	if symbol == _data.pool_award_on_fever and result.total_bet >= _data.pool_min_total_bet:
 		result.pool_won += get_pool()
 		_pool_units = _data.pool_initial * POOL_SCALE
+
+
+## 피버 보너스 금액. average = 배수 × (카운터를 줄인 판들의 베팅 합 ÷ 초기 카운트), 소수점 버림.
+## 같은 베팅으로만 쳤다면 trigger(배수 × 발동한 판의 베팅)와 금액이 같다.
+func _fever_bonus_amount(symbol: String, trigger_bet: int) -> int:
+	var multiplier: int = _data.fever_multipliers[symbol]
+	if _data.fever_bonus_bet_basis == BalanceData.FEVER_BASIS_TRIGGER:
+		return multiplier * trigger_bet
+	@warning_ignore("integer_division")
+	return multiplier * _fever_bet_sums[symbol] / _data.fever_initial_counts[symbol]
 
 
 func _has_win_with(wins: Array[LineWin], symbol: String) -> bool:

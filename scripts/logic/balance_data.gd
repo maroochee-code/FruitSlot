@@ -3,6 +3,12 @@ extends RefCounted
 ## balance.json을 읽고 검사해서 보관한다. 모든 밸런스 수치는 여기서만 나온다.
 
 const DEFAULT_PATH: String = "res://data/balance.json"
+## 피버 보너스에 곱하는 베팅 기준 (balance.json의 fever.bonus_bet_basis)
+## trigger = 발동한 판의 베팅, average = 카운터를 줄인 판들의 평균 베팅
+const FEVER_BASIS_TRIGGER: String = "trigger"
+const FEVER_BASIS_AVERAGE: String = "average"
+const FEVER_BASES: PackedStringArray = [FEVER_BASIS_TRIGGER, FEVER_BASIS_AVERAGE]
+const FEVER_BASIS_DEFAULT: String = FEVER_BASIS_AVERAGE
 
 var version: String = ""
 var reel_count: int = 0
@@ -21,6 +27,8 @@ var fever_min_total_bet: int = 0
 var fever_symbols: PackedStringArray = PackedStringArray()
 var fever_initial_counts: Dictionary[String, int] = {}
 var fever_multipliers: Dictionary[String, int] = {}
+## FEVER_BASES 중 하나. 허용하지 않는 값이면 기본값으로 대체한다.
+var fever_bonus_bet_basis: String = FEVER_BASIS_DEFAULT
 
 var pool_initial: int = 0
 var pool_contribution_rate: float = 0.0
@@ -29,6 +37,8 @@ var pool_award_on_fever: String = ""
 
 ## 검사에서 발견한 문제 목록. 비어 있어야 정상.
 var errors: PackedStringArray = PackedStringArray()
+## 기본값으로 대체한 항목 목록. 있어도 데이터는 쓸 수 있다.
+var warnings: PackedStringArray = PackedStringArray()
 
 
 ## 파일에서 읽는다. 문제가 있으면 null을 돌려주고 에러를 출력한다.
@@ -44,7 +54,11 @@ static func load_from_file(path: String = DEFAULT_PATH) -> BalanceData:
 	if typeof(json.data) != TYPE_DICTIONARY:
 		push_error("BalanceData: 최상위가 객체가 아님 %s" % path)
 		return null
-	return from_dict(json.data)
+	var data: BalanceData = from_dict(json.data)
+	if data != null:
+		for message: String in data.warnings:
+			push_warning("BalanceData: " + message)
+	return data
 
 
 ## 사전(Dictionary)에서 만든다. 테스트에서 임의 데이터를 넣을 때도 쓴다.
@@ -117,12 +131,22 @@ func _parse_lines(raw_lines: Array) -> void:
 
 func _parse_fever(raw_fever: Dictionary) -> void:
 	fever_min_total_bet = int(raw_fever.get("min_total_bet", 0))
+	fever_bonus_bet_basis = _checked_basis(raw_fever.get("bonus_bet_basis", FEVER_BASIS_DEFAULT))
 	for entry: Variant in raw_fever.get("targets", []):
 		var target: Dictionary = entry
 		var symbol: String = str(target.get("symbol", ""))
 		fever_symbols.append(symbol)
 		fever_initial_counts[symbol] = int(target.get("initial_count", 0))
 		fever_multipliers[symbol] = int(target.get("bonus_multiplier", 0))
+
+
+## 허용 값이 아니면 기본값으로 바꾸고 warnings에 적는다 (오류로 막지는 않는다).
+func _checked_basis(raw_basis: Variant) -> String:
+	var basis: String = str(raw_basis)
+	if FEVER_BASES.has(basis):
+		return basis
+	warnings.append("fever.bonus_bet_basis(%s)는 %s 중 하나여야 함 → 기본값 %s 사용" % [basis, ", ".join(FEVER_BASES), FEVER_BASIS_DEFAULT])
+	return FEVER_BASIS_DEFAULT
 
 
 func _parse_pool(raw_pool: Dictionary) -> void:
