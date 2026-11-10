@@ -110,3 +110,35 @@ START를 누르면 연출을 끝내고 숫자를 최종값으로 확정한 뒤 �
 | 딱딱 끊어 멈추는 오락실 느낌 | `slide_cells` 1.5, `slide_ease_power` 2, `bounce_cells` 0.1 |
 | 미끄러지듯 길게 | `slide_cells` 5, `slide_ease_power` 4 |
 | 튕김 없이 깔끔하게 | `bounce_cells` 0 |
+
+## 운영자 설정이 feel.json 위에 덮어쓰는 값 (8-A)
+
+시작 화면에서 **F2**를 눌러 여는 운영자 설정 화면은 아래 feel 키를 바꿀 수 있습니다. 바꾼 값은 `data/feel.json`이 아니라 **`user://settings.json`에 저장**되고, 게임을 켤 때 feel.json 값 위에 덮어씁니다.
+
+| 설정 화면 줄 | feel 키 |
+|---|---|
+| 효과음 볼륨 / BGM 볼륨 | `sfx_volume_db` / `bgm_volume_db` |
+| AUTO 연출 배율 | `auto_effect_scale` |
+| 정산 연출 소 / 중 / 대 (초) | `countup_small_sec` / `countup_mid_sec` / `countup_big_sec` |
+| 당첨 중 / 대 기준 (배) | `win_mid_ratio` / `win_big_ratio` (중 < 대) |
+
+**주의: 설정 파일에 저장된 키는 feel.json(·economy.json)을 고쳐도 반영되지 않습니다.**
+- 설정 화면에서 기본값과 다른 값은 **노랑**으로 보입니다. 노랑인 줄이 곧 "설정 파일에 저장된 키"입니다.
+- **바꾸지 않은 키는 feel.json을 고치면 계속 반영**됩니다 (설정 파일에는 바꾼 키만 저장되고, 기본값으로 돌아오면 저장 대상에서 빠집니다).
+- F6·파일 감시로 feel.json을 다시 읽어도 설정 키의 덮어쓰기는 유지됩니다.
+- 같은 방식으로 economy.json의 `start_credit` / `continue_credit` / `continue_max` / `coin_amount`와 balance.json의 `auto_spin.stop_on_win_at`도 설정 화면에서 덮어쓸 수 있습니다. 밸런스(릴·배당·피버·풀)는 설정 화면에 없습니다.
+- `bgm_enabled`(BGM 켜기/끄기)는 설정 파일에만 있는 키입니다 (data/*.json에는 없음, 기본 켜짐).
+
+### 저장 위치 (user://)
+| 파일 | 내용 | Windows 실제 경로 |
+|---|---|---|
+| `settings.json` | 운영자가 바꾼 설정 (`{"version":1,"values":{...}}`, 바꾼 키만) | `%APPDATA%\Godot\app_userdata\FruitSlot\settings.json` (예: `C:\Users\<사용자>\AppData\Roaming\Godot\app_userdata\FruitSlot\`) |
+| `highscore.json` | 최고 기록 (`{"version":1,"best_peak_credit":숫자}`) | 같은 폴더의 `highscore.json` |
+
+- 에디터에서 폴더를 바로 여는 방법: **프로젝트 → 사용자 데이터 폴더 열기**. 내보낸 exe도 프로젝트 이름(`FruitSlot`)이 같아 같은 폴더를 씁니다.
+- 파일이 없거나 망가졌거나 버전을 모르면 **기본값(feel.json·economy.json·balance.json)으로 시작**합니다 (망가진 파일은 다음 "저장하고 닫기" 전까지 건드리지 않음). 범위 밖 값과 모르는 키는 그 키만 무시합니다.
+
+### 기본값으로 되돌리는 방법
+1. 시작 화면에서 **F2** → 하단 **"기본값으로"**를 **두 번** 누르면(첫 클릭은 확인 글자로만 바뀜) 설정 값 전체가 기본값으로 돌아갑니다 → **"저장하고 닫기"**로 확정. 최고 기록은 그대로 남습니다.
+2. 또는 게임을 끄고 `settings.json`을 삭제해도 됩니다 (다음 실행부터 전부 기본값).
+3. 최고 기록은 크레딧 탭의 **"최고 기록 초기화"**(두 번 클릭) 또는 `highscore.json` 삭제로 지웁니다.

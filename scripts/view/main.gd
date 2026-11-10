@@ -147,6 +147,9 @@ func _ready() -> void:
 		return
 	_data = GameState.get_balance()
 	_feel = FeelConfig.load_from_file()
+	# 운영자 설정(8-A): 바꾼 키만 feel.json 값 위에 덮어쓴다. BGM 끄기는 버스 mute로 반영
+	UserSettings.active().apply_feel_values(_feel)
+	SettingsScreen.apply_bgm_mute(UserSettings.active().bgm_enabled())
 	_latest_feel = _feel
 	set_feel_path(FeelConfig.DEFAULT_PATH)
 	_build_background()
@@ -165,6 +168,12 @@ func _ready() -> void:
 	GameState.refresh()
 	_refresh_side_panel(GameState.get_pool(), GameState.get_fever_counts())
 	_refresh_buttons()
+
+
+## 창 닫기 요청: 이번 판의 최고 크레딧을 최고 기록으로 한 번 남긴다 (더 클 때만, 테스트 판 제외)
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		HighScore.active().submit(GameState.run_peak_credit, GameState.run_tainted)
 
 
 func _process(delta: float) -> void:
@@ -197,6 +206,8 @@ func reload_feel() -> bool:
 	if not loaded.file_ok:
 		_announce_feel("feel.json을 읽지 못해 이전 값을 유지합니다. (파일을 확인하세요)")
 		return false
+	# F6·파일 감시로 다시 읽어도 운영자가 바꾼 키는 설정 값이 우선한다
+	UserSettings.active().apply_feel_values(loaded)
 	_latest_feel = loaded
 	var message: String = "feel.json 다시 읽음: 다음 스핀부터 적용"
 	if not loaded.errors.is_empty():

@@ -2,7 +2,8 @@ class_name TitleScreen
 extends Control
 ## 시작 화면(7-C): 로고 + START / EXIT + 깜빡이는 PRESS START. 게임 규칙·결과 계산과 무관하다.
 ## START는 GameState.new_game()을 딱 한 번 부르고, button.wav가 끝난 뒤 게임 화면(main.tscn)으로 넘어간다.
-## 조작: SPACE / ENTER = START, ESC = EXIT, 마우스 클릭. F1·F6 같은 개발용 키는 이 화면에서 무시한다.
+## 조작: SPACE / ENTER = START, ESC = EXIT, 마우스 클릭, F2 = 운영자 설정(숨김 키). F1·F6 같은 개발용 키는 이 화면에서 무시한다.
+## 설정 화면이 열려 있는 동안에는 모든 키를 설정 화면이 처리한다 (Esc는 설정만 닫고 게임을 종료하지 않는다).
 ## 화면 배치는 승인된 미리보기 assets/_preview/7c_title_logo_x2.png와 같다 (기존 로고 ×2, 기존 벽지·프레임·버튼·패널 재사용).
 
 ## START가 받아들여졌다 (new_game()을 부른 직후)
@@ -33,6 +34,12 @@ const PRESS_COLOR: Color = Color("ffd23a")
 const HINT_COLOR: Color = Color("8a8aa0")
 const PRESS_TEXT: String = "PRESS START"
 const HINT_TEXT: String = "SPACE / ENTER  시작     ESC  종료"
+const BEST_Y: float = 324.0
+const BEST_COLOR: Color = Color("c8cce8")
+const DEV_COLOR: Color = Color("ff9a1f")
+const DEV_TEXT: String = "DEV"
+const DEV_SIZE: Vector2 = Vector2(48, 16)
+const DEV_MARGIN: float = 6.0
 
 ## 테스트가 false로 두면 씬 전환·종료를 직접 하지 않는다 (시그널만 보낸다)
 var auto_connect: bool = true
@@ -44,6 +51,8 @@ var _press: Label
 var _start_button: Button
 var _exit_button: Button
 var _logo: TextureRect
+var _settings: SettingsScreen
+var _best: Label
 var _blink_time: float = 0.0
 ## START가 받아들여진 뒤 true. 이후 모든 입력(START·EXIT·키)을 무시한다.
 var _starting: bool = false
@@ -54,6 +63,9 @@ var _wait_left: float = 0.0
 func _ready() -> void:
 	theme = UiSkin.make_theme()
 	_feel = FeelConfig.load_from_file()
+	# 운영자 설정: 바꾼 키만 feel.json 값 위에 덮어쓰고, 소리는 버스에 바로 반영한다
+	UserSettings.active().apply_feel_values(_feel)
+	SettingsScreen.apply_audio(_feel.sfx_volume_db, _feel.bgm_volume_db, UserSettings.active().bgm_enabled())
 	_build_background()
 	_build_panels()
 	_build_buttons()
@@ -61,6 +73,7 @@ func _ready() -> void:
 	_sound = SoundBank.new()
 	add_child(_sound)
 	_sound.set_sfx_volume_db(_feel.sfx_volume_db)
+	_build_settings()
 	if auto_connect:
 		start_finished.connect(_go_main)
 		exit_requested.connect(_quit_game)
@@ -86,7 +99,7 @@ func advance(delta: float) -> void:
 
 ## START: 새 게임을 시작한다. 이미 눌렸으면(소리가 끝나길 기다리는 중 포함) 무시하고 false.
 func press_start() -> bool:
-	if _starting or not GameState.ready_ok:
+	if _starting or _settings.is_open() or not GameState.ready_ok:
 		return false
 	if not GameState.new_game():
 		return false
@@ -99,7 +112,7 @@ func press_start() -> bool:
 
 ## EXIT: 확인 없이 바로 종료를 요청한다. START가 이미 받아들여졌으면 무시.
 func press_exit() -> bool:
-	if _starting:
+	if _starting or _settings.is_open():
 		return false
 	exit_requested.emit()
 	return true
@@ -107,6 +120,22 @@ func press_exit() -> bool:
 
 func is_starting() -> bool:
 	return _starting
+
+
+## 운영자 설정 화면을 연다 (F2). START가 받아들여진 뒤나 이미 열려 있으면 false.
+func open_settings() -> bool:
+	if _starting or _settings.is_open():
+		return false
+	_settings.open()
+	return true
+
+
+func settings_screen() -> SettingsScreen:
+	return _settings
+
+
+func best_label() -> Label:
+	return _best
 
 
 ## 지금 PRESS START 글자가 보이는 상태인가
@@ -142,16 +171,32 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var key: InputEventKey = event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
+	# 설정 화면이 열려 있으면 모든 키는 설정 화면이 처리한다 (Esc로 게임이 종료되지 않게)
+	if _settings.is_open():
+		_settings.handle_key(key)
+		return
 	match key.keycode:
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
 			press_start()
 		KEY_ESCAPE:
 			press_exit()
+		KEY_F2:
+			open_settings()
 
 
 func _button_sound_length() -> float:
 	var stream: AudioStream = load(SoundBank.sound_path(SoundBank.NAME_BUTTON)) as AudioStream
 	return stream.get_length() if stream != null else 0.0
+
+
+func _refresh_best() -> void:
+	var best: int = HighScore.active().best_peak_credit
+	_best.visible = best > 0
+	_best.text = "BEST %s" % GameOverOverlay.format_amount(best)
+
+
+func _on_settings_closed(_saved: bool) -> void:
+	_refresh_best()
 
 
 func _refresh_blink() -> void:
@@ -241,6 +286,38 @@ func _make_button(node_name: String, text: String, pos: Vector2) -> Button:
 func _build_texts() -> void:
 	_press = _make_label("PressLabel", PRESS_TEXT, UiFont.Face.LARGE, PRESS_COLOR, PRESS_OFFSET_Y)
 	_make_label("HintLabel", HINT_TEXT, UiFont.Face.BODY, HINT_COLOR, HINT_OFFSET_Y)
+	_best = Label.new()
+	_best.name = "BestLabel"
+	_best.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_best.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_best.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	UiFont.apply(_best, UiFont.Face.BODY)
+	_best.add_theme_color_override("font_color", BEST_COLOR)
+	add_child(_best)
+	# 크기는 트리에 넣은 뒤에 정한다 (넣기 전에 정하면 기본 글꼴 기준 최소 크기로 커져서 남는다)
+	_best.position = Vector2(PANEL_RECT.position.x, BEST_Y)
+	_best.size = Vector2(PANEL_RECT.size.x, LABEL_H)
+	# 개발 빌드에서만 "DEV" 표시. 릴리즈에서는 노드를 만들지 않는다.
+	if GameState.dev_build:
+		var dev: Label = Label.new()
+		dev.name = "DevLabel"
+		dev.text = DEV_TEXT
+		dev.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		dev.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		UiFont.apply(dev, UiFont.Face.SMALL)
+		dev.add_theme_color_override("font_color", DEV_COLOR)
+		add_child(dev)
+		dev.position = Vector2(BOTTOM_RECT.end.x - DEV_SIZE.x - DEV_MARGIN, BOTTOM_RECT.position.y + DEV_MARGIN)
+		dev.size = DEV_SIZE
+	_refresh_best()
+
+
+## 운영자 설정 화면: 맨 위에 둔다 (열려 있는 동안 시작 화면의 클릭을 막는다)
+func _build_settings() -> void:
+	_settings = SettingsScreen.new()
+	_settings.set_sound(_sound)
+	_settings.closed.connect(_on_settings_closed)
+	add_child(_settings)
 
 
 func _make_label(node_name: String, text: String, face: UiFont.Face, color: Color, offset_y: float) -> Label:

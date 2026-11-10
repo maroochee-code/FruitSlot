@@ -77,6 +77,9 @@ var auto_gap_sec: float:
 		_auto.gap_sec = value
 
 var _data: BalanceData
+## initialize()에 넘어온 기본 economy 값과 AUTO 정지 기준 (운영자 설정은 이 위에 얹고, 설정을 지우면 여기로 돌아간다)
+var _base_economy: Dictionary = {}
+var _base_stop_on_win: int = 0
 ## 정산 도중 AUTO가 꺼졌을 때, auto_stopped를 spin_finished 다음에 보내기 위해 이유를 잠시 들고 있는다.
 var _deferred_stop_reason: StringName = &""
 var _auto: AutoSpin = AutoSpin.new()
@@ -97,6 +100,8 @@ func _ready() -> void:
 		return
 	# 크레딧 0으로 대기한다. 시작 크레딧은 시작 화면(title.tscn)의 START가 new_game()을 불러 준다.
 	initialize(data, economy, int(Time.get_ticks_usec()))
+	# 운영자 설정(user://settings.json)이 있으면 economy·AUTO 값 위에 덮어쓴다 (헤드리스에서는 꺼져 있어 기본값 그대로)
+	apply_user_values()
 
 
 ## economy.json을 읽어 검사한다. 문제가 있으면 빈 사전을 돌려주고 에러를 출력한다.
@@ -139,6 +144,8 @@ func initialize(data: BalanceData, economy: Dictionary, rng_seed: int) -> void:
 	_auto = AutoSpin.new()
 	_auto.gap_sec = gap
 	_auto.stop_on_win_at = data.auto_stop_on_win_at
+	_base_economy = economy.duplicate()
+	_base_stop_on_win = data.auto_stop_on_win_at
 	coin_amount = int(economy["coin_amount"])
 	start_credit = int(economy["start_credit"])
 	continue_credit = int(economy["continue_credit"])
@@ -155,6 +162,21 @@ func initialize(data: BalanceData, economy: Dictionary, rng_seed: int) -> void:
 	_deferred_stop_reason = &""
 	_reset_run_record()
 	ready_ok = true
+
+
+## 운영자 설정(8-A)을 economy 4개 값과 AUTO 큰 당첨 정지 기준에 적용한다. 기본값(initialize에 넘어온 값) 위에 "바꾼 키만" 얹는다.
+## 설정을 지웠다면 기본값으로 돌아간다. 크레딧을 올리지 않는다 (지급은 그대로 grant_credit 경유).
+## 시작 화면에서만 부르므로 진행 중인 판이 없다. continues_left는 건드리지 않는다 (new_game()이 continue_max로 복구한다).
+func apply_user_values(settings: UserSettings = null) -> void:
+	if not ready_ok:
+		return
+	var user: UserSettings = settings if settings != null else UserSettings.active()
+	var economy: Dictionary = user.economy_values(_base_economy)
+	coin_amount = int(economy["coin_amount"])
+	start_credit = int(economy["start_credit"])
+	continue_credit = int(economy["continue_credit"])
+	continue_max = int(economy["continue_max"])
+	_auto.stop_on_win_at = user.auto_stop_on_win_at(_base_stop_on_win)
 
 
 ## 화면이 처음 연결된 뒤 현재 값을 한 번 알려준다.
@@ -374,6 +396,8 @@ func settle_spin() -> SpinResult:
 	if credit <= 0:
 		_bet_at_game_over = bet_before_lowering
 		_game_over = true
+		# 최고 기록: 이 판의 최고 크레딧을 기록한다 (테스트 판은 제외, 더 클 때만 저장)
+		HighScore.active().submit(run_peak_credit, run_tainted)
 		game_over.emit()
 	return result
 

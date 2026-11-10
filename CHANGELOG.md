@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## 0.20.0 — 2026-11-11 (8-A: 운영자 설정)
+
+### 추가
+- 운영자 설정 화면 `SettingsScreen`(`scripts/view/settings_screen.gd`): 시작 화면에서 **F2**로 열고, 탭 3개(소리·AUTO / 크레딧 / 연출). ↑↓ 줄 선택, ←→ 값 변경(Shift 큰 단계), Tab·PageUp·PageDown 탭, Enter 저장하고 닫기, Esc 취소. 기본값과 다른 값은 노랑. 소리는 만지는 동안 즉시 들리고 취소하면 복구. "기본값으로"·"최고 기록 초기화"는 두 번 눌러야 실행
+- 설정이 열려 있는 동안 모든 키는 설정 화면이 처리한다 → **Esc는 설정만 닫고 게임을 종료하지 않음**
+- `UserSettings`(`scripts/logic/user_settings.gd`): `user://settings.json`(`{"version":1,"values":{...}}`, 바꾼 키만) 저장·불러오기·검증. 없음·손상·모르는 버전은 기본값, 범위 밖·모르는 키는 그 키만 무시, 중 < 대 기준 보장, 임시 파일 후 교체 방식 쓰기
+- `HighScore`(`scripts/logic/high_score.gd`): `user://highscore.json`(`{"version":1,"best_peak_credit":n}`). GAME OVER 때·창 닫을 때 한 판의 최고 크레딧을 기록(더 클 때만, 테스트 판 `run_tainted` 제외). 시작 화면에 `BEST n` 표시
+- 설정 키: feel 8개(`sfx_volume_db` `bgm_volume_db` `auto_effect_scale` `countup_small/mid/big_sec` `win_mid/big_ratio`), economy 4개(`start_credit` `continue_credit` `continue_max` `coin_amount`), AUTO `auto_stop_on_win_at`, 설정 파일 전용 `bgm_enabled`(기본 켜짐, BGM 버스 mute). 새 data/*.json 키 없음, 밸런스 값은 노출하지 않음
+- `GameState.apply_user_values()`: economy 4개 값과 AUTO 정지 기준에 설정을 덮어씀(기본값 위에 얹고, 설정을 지우면 기본값으로 복귀). `_ready`에서 적용, 크레딧은 올리지 않음(`grant_credit` 경유 유지)
+- 시작 화면: 개발 빌드에서만 `DEV` 라벨(릴리즈에는 노드 없음), `BEST` 표시(EXIT 아래)
+- 테스트: 새 `settings_test`(99), state_test +21, view_test +134. 실행: `godot --headless --path . res://scenes/test/settings_test.tscn`
+
+### 변경
+- `main.gd`: 설정 덮어쓰기 적용 2곳(`_ready`의 feel 로드 직후, `reload_feel` — F6·파일 감시 재로딩 뒤에도 설정 키 유지) + 창 닫기 요청 때 최고 기록 기록
+- 설정 파일 격리: 설정 사용은 헤드리스(테스트·시뮬레이션)에서 기본으로 꺼져 실제 user:// 파일을 읽지도 쓰지도 않음. state·view·match 테스트는 시작 때 `UserSettings.configure(false)`를 명시하고, 저장 테스트는 격리 폴더(`user://settings_test*/`)만 사용
+- 문서: 기획서 13장 조작표(F2)·14장 신설, `docs/feel.md`(설정 덮어쓰기 주의, user:// 실제 경로, 기본값으로 되돌리는 방법), 결정 기록 `docs/decisions/2026-11-11-operator-settings.md`
+- `project.godot`·`balance.json`·`economy.json`·`feel.json`·로직(`SlotLogic`)·6단계 화면·GAME OVER·시작 화면 기존 좌표 변경 없음
+
+### 알려진 문제
+- 설정 화면은 시작 화면에서만 열린다(게임 중 열기 없음). 소리를 바꾸려면 게임을 다시 켜야 한다
+- BGM 볼륨은 시작 화면에 BGM이 없어 설정 중에는 들을 수 없다(게임 화면에서 적용된 값으로 들림)
+- 테스트 모드 스위치(`GameState.test_mode`)는 8-B에서 연결
+
 ## 0.19.0 — 2026-11-11 (7-C: 시작 화면)
 
 ### 추가

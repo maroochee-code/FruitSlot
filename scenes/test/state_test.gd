@@ -14,6 +14,7 @@ var _auto_states: Array[Node] = []
 
 
 func _ready() -> void:
+	UserSettings.configure(false)
 	_data = BalanceData.load_from_file()
 	_test_start_state()
 	_test_coin()
@@ -46,6 +47,8 @@ func _ready() -> void:
 	_test_continue_keeps_run()
 	_test_new_game()
 	_test_title_start()
+	_test_user_values()
+	_test_high_score_hook()
 	for state: Node in _auto_states:
 		state.free()
 	_auto_states.clear()
@@ -872,3 +875,98 @@ func _test_title_start() -> void:
 	booted.insert_coin()
 	_check(booted.coin_allowed() and booted.credit == credit + booted.coin_amount and booted.run_tainted, "START 뒤 개발 빌드+테스트 모드: COIN 지급, 테스트 판 표시")
 	booted.free()
+
+
+## 8-A: 운영자 설정이 economy 값·AUTO 기준에 적용되는 방식과 GAME OVER 때의 최고 기록
+func _test_user_values() -> void:
+	UserSettings.configure(false)
+	# 기본값: 설정이 없으면 economy.json 값 그대로
+	var state: Node = _fresh(21)
+	var base_start: int = state.start_credit
+	var base_continue: int = state.continue_credit
+	var base_max: int = state.continue_max
+	var base_coin: int = state.coin_amount
+	state.apply_user_values()
+	_check(state.start_credit == base_start and state.continue_credit == base_continue and state.continue_max == base_max and state.coin_amount == base_coin, "설정이 없으면(꺼짐) apply_user_values 뒤에도 economy 값 그대로")
+	# 덮어쓰기
+	var user: UserSettings = UserSettings.new()
+	user.set_value("start_credit", 5000)
+	user.set_value("continue_credit", 1500)
+	user.set_value("continue_max", 1)
+	user.set_value("coin_amount", 50)
+	user.set_value("auto_stop_on_win_at", 777)
+	var grants: Array[String] = []
+	state.connect("credit_granted", func(amount: int, reason: StringName) -> void: grants.append("%d %s" % [amount, reason]))
+	state.apply_user_values(user)
+	_check(state.start_credit == 5000 and state.continue_credit == 1500 and state.continue_max == 1 and state.coin_amount == 50, "apply_user_values: economy 4개 값을 덮어씀")
+	_check(state._auto.stop_on_win_at == 777, "apply_user_values: AUTO 큰 당첨 정지 기준을 덮어씀")
+	_check(state.credit == 0 and grants.is_empty(), "apply_user_values는 크레딧을 올리지 않음 (grant_credit을 거치지 않음)")
+	# 다음 NEW GAME부터 적용
+	_check(state.new_game() and state.credit == 5000 and grants == ["5000 start"], "다음 NEW GAME(START)부터 새 시작 크레딧이 grant_credit(start)로 지급")
+	_check(state.continues_left == 1, "NEW GAME이 CONTINUE 횟수를 새 값(1)으로 복구")
+	_check(_drain_to_game_over(state) and state.can_continue(), "GAME OVER 뒤 CONTINUE 가능")
+	grants.clear()
+	_check(state.continue_game() and state.credit == 1500 and grants == ["1500 continue"], "CONTINUE는 새 CONTINUE 코인(1500)을 grant_credit(continue)로 지급")
+	_drain_to_game_over(state)
+	_check(not state.can_continue() and not state.continue_game(), "CONTINUE 횟수 1회를 쓰면 더는 안 됨")
+	# 설정을 지우면 기본값으로 돌아감 (economy 사전을 다시 읽지 않아도)
+	state.apply_user_values(UserSettings.new())
+	_check(state.start_credit == base_start and state.continue_credit == base_continue and state.continue_max == base_max and state.coin_amount == base_coin and state._auto.stop_on_win_at == 0, "설정을 지우고 적용하면 기본값(economy.json·balance.json)으로 복귀")
+	state.free()
+	# COIN은 덮어쓴 지급량을 쓰되 coin_allowed 규칙·grant_credit 경유는 그대로
+	var coin_state: Node = _fresh(22)
+	var coin_user: UserSettings = UserSettings.new()
+	coin_user.set_value("coin_amount", 250)
+	coin_state.apply_user_values(coin_user)
+	var coin_grants: Array[String] = []
+	coin_state.connect("credit_granted", func(amount: int, reason: StringName) -> void: coin_grants.append("%d %s" % [amount, reason]))
+	coin_state.dev_build = true
+	coin_state.insert_coin()
+	_check(coin_state.credit == 250 and coin_grants == ["250 test_coin"] and coin_state.run_tainted, "COIN 지급량 덮어쓰기: grant_credit(test_coin) 경유, 테스트 판 표시")
+	coin_state.dev_build = false
+	coin_state.insert_coin()
+	_check(coin_state.credit == 250, "지급량을 바꿔도 릴리즈 빌드(dev_build false)에서는 COIN 불가")
+	coin_state.free()
+	# 초기화되지 않은 GameState에서는 아무것도 하지 않음
+	var raw: Node = load(GAME_STATE_SCRIPT).new()
+	raw.apply_user_values(user)
+	_check(raw.start_credit == 0 and not raw.ready_ok, "initialize 전에는 apply_user_values가 아무것도 안 함")
+	raw.free()
+	# AUTO 정지 기준이 실제 동작에 쓰임
+	var auto_state: Node = _fresh(23)
+	var auto_user: UserSettings = UserSettings.new()
+	auto_user.set_value("auto_stop_on_win_at", 1)
+	auto_state.apply_user_values(auto_user)
+	_check(auto_state._auto.is_big_win(1) and not auto_state._auto.is_big_win(0), "AUTO 정지 기준 1: 당첨 1 이상이면 정지 판정")
+	auto_state.free()
+
+
+func _test_high_score_hook() -> void:
+	UserSettings.configure(false)
+	# 테스트 판(COIN 사용)은 기록하지 않음
+	var tainted: Node = _fresh(31)
+	tainted.new_game()
+	tainted.dev_build = true
+	tainted.insert_coin()
+	_check(tainted.run_tainted, "준비: COIN을 쓴 테스트 판")
+	_check(_drain_to_game_over(tainted), "테스트 판도 GAME OVER까지 진행")
+	_check(HighScore.active().best_peak_credit == 0, "테스트 판의 GAME OVER는 최고 기록을 바꾸지 않음")
+	tainted.free()
+	# 일반 판은 GAME OVER 때 그 판의 최고 크레딧을 기록
+	var clean: Node = _fresh(32)
+	clean.new_game()
+	_check(_drain_to_game_over(clean), "준비: 일반 판 GAME OVER")
+	var peak: int = clean.run_peak_credit
+	_check(peak >= clean.start_credit and HighScore.active().best_peak_credit == peak, "GAME OVER 때 판의 최고 크레딧(%d)이 최고 기록으로 저장" % peak)
+	# CONTINUE 뒤 다시 GAME OVER: 더 큰 값일 때만 갱신
+	clean.continue_game()
+	_drain_to_game_over(clean)
+	_check(HighScore.active().best_peak_credit == clean.run_peak_credit and clean.run_peak_credit >= peak, "CONTINUE 뒤 두 번째 GAME OVER에서도 판 최고치 기준으로 기록")
+	clean.free()
+	# 더 낮은 판은 기록을 낮추지 않음
+	var low: Node = _fresh_with({ "start_credit": 10 }, 33)
+	low.new_game()
+	_drain_to_game_over(low)
+	_check(HighScore.active().best_peak_credit >= peak, "더 낮은 판의 GAME OVER는 최고 기록을 낮추지 않음")
+	low.free()
+	UserSettings.configure(false)

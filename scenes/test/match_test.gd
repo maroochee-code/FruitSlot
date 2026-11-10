@@ -31,6 +31,7 @@ var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 
 func _ready() -> void:
+	UserSettings.configure(false)
 	_rng.seed = MATCH_SEED
 	# 사용법: godot --headless res://scenes/test/match_test.tscn -- --spins=2000 (스핀 수 줄여 빨리 돌려 볼 때)
 	for arg: String in OS.get_cmdline_user_args():

@@ -32,6 +32,8 @@ var _fever_frames: int = 0
 
 
 func _ready() -> void:
+	# 설정 파일 격리: 개발자 PC의 실제 user://settings.json·highscore.json을 읽지도 쓰지도 않는다
+	UserSettings.configure(false)
 	# 오토로드 상태를 처음 상태로 되돌린 뒤 시작한다.
 	GameState.initialize(GameState.get_balance(), GameState.load_economy(), TEST_SEED)
 	_rng.seed = TEST_SEED
@@ -67,6 +69,7 @@ func _ready() -> void:
 	await _test_settle_show()
 	await _test_game_over_view()
 	await _test_title_screen()
+	await _test_settings_screen()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -2716,3 +2719,524 @@ func _test_title_feel_key() -> void:
 	_check(edge.title_blink_sec == 0.2 and edge_high.title_blink_sec == 2.0, "경계값 0.2 / 2.0은 그대로")
 	var real: FeelConfig = FeelConfig.load_from_file()
 	_check(real.errors.is_empty() and real.title_blink_sec == 0.6, "data/feel.json의 title_blink_sec = 0.6, 문제 없음")
+
+
+# ---------------------------------------------------------------- 8-A 운영자 설정 화면
+
+## 설정 저장·불러오기를 확인할 때만 켜는 격리 폴더. 개발자 PC의 실제 user://settings.json·highscore.json은 건드리지 않는다.
+const SETTINGS_TEST_DIR: String = "user://settings_test_view/"
+
+
+func _settings_begin() -> void:
+	_settings_clean()
+	UserSettings.configure(true, SETTINGS_TEST_DIR)
+
+
+func _settings_end() -> void:
+	UserSettings.configure(false)
+	_settings_clean()
+	var feel: FeelConfig = FeelConfig.load_from_file()
+	SettingsScreen.apply_audio(feel.sfx_volume_db, feel.bgm_volume_db, true)
+
+
+func _settings_clean() -> void:
+	var dir: DirAccess = DirAccess.open("user://")
+	if dir == null or not dir.dir_exists("settings_test_view"):
+		return
+	var inner: DirAccess = DirAccess.open(SETTINGS_TEST_DIR)
+	for file_name: String in inner.get_files():
+		inner.remove(file_name)
+	dir.remove("settings_test_view")
+
+
+func _key_shift(target: Node, keycode: Key) -> void:
+	var event: InputEventKey = InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = true
+	event.shift_pressed = true
+	target._unhandled_key_input(event)
+
+
+func _sfx_db() -> float:
+	return AudioServer.get_bus_volume_db(AudioServer.get_bus_index(SoundBank.BUS_SFX))
+
+
+func _bgm_db() -> float:
+	return AudioServer.get_bus_volume_db(AudioServer.get_bus_index(SoundBank.BUS_BGM))
+
+
+func _bgm_muted() -> bool:
+	return AudioServer.is_bus_mute(AudioServer.get_bus_index(SoundBank.BUS_BGM))
+
+
+func _test_settings_screen() -> void:
+	await _test_settings_open_and_keys()
+	await _test_settings_layout_and_tabs()
+	await _test_settings_values()
+	await _test_settings_save_and_cancel()
+	await _test_settings_resets()
+	await _test_settings_applied_in_game()
+	await _test_settings_dev_and_best()
+
+
+## F2로 열기, 열려 있는 동안 입력 격리 (Esc는 설정만 닫고 게임을 종료하지 않음)
+func _test_settings_open_and_keys() -> void:
+	_settings_begin()
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var settings: SettingsScreen = title.settings_screen()
+	var exits: Array[int] = [0]
+	title.exit_requested.connect(func() -> void: exits[0] += 1)
+	var starts: Array[int] = [0]
+	title.start_requested.connect(func() -> void: starts[0] += 1)
+	var closes: Array[bool] = []
+	settings.closed.connect(func(saved: bool) -> void: closes.append(saved))
+	_check(settings != null and not settings.is_open() and not settings.visible, "설정 화면: 처음엔 닫혀 있고 보이지 않음")
+	_check(title.get_child(title.get_child_count() - 1) == settings, "설정 화면은 시작 화면 위(맨 마지막 자식)")
+	_check(settings.size == Vector2(640, 480) and settings.mouse_filter == Control.MOUSE_FILTER_STOP, "설정 화면: 640×480 전체를 덮고 클릭을 막음")
+	for keycode: Key in [KEY_F1, KEY_F6, KEY_C, KEY_B, KEY_LEFT]:
+		_key(title, keycode)
+	_check(not settings.is_open(), "F2가 아닌 키로는 열리지 않음")
+	_key(title, KEY_F2)
+	_check(settings.is_open() and settings.visible and not title.is_starting(), "F2: 운영자 설정 열림")
+	_check(not title.open_settings() and not title.press_start() and not title.press_exit(), "열려 있는 동안: 다시 열기·START·EXIT 모두 거절")
+	_key(title, KEY_F2)
+	_check(settings.is_open(), "열려 있을 때 F2를 또 눌러도 그대로")
+	for keycode: Key in [KEY_F1, KEY_F6, KEY_C, KEY_B, KEY_M, KEY_X, KEY_A, KEY_1]:
+		_key(title, keycode)
+	_check(settings.draft().is_empty() and settings.is_open() and starts[0] == 0 and exits[0] == 0, "열려 있는 동안 F1·F6·C 등은 무반응")
+	_key(title, KEY_SPACE)
+	_check(starts[0] == 0 and not title.is_starting() and GameState.credit == 0, "열려 있는 동안 Space는 START가 아님")
+	_key(title, KEY_ESCAPE)
+	_check(not settings.is_open() and not settings.visible and exits[0] == 0 and closes == [false], "Esc: 설정만 닫고(취소) 게임을 종료하지 않음")
+	_check(not title.is_starting() and GameState.credit == 0, "Esc로 닫아도 START·크레딧에는 변화 없음")
+	_key(title, KEY_ESCAPE)
+	_check(exits[0] == 1, "설정이 닫힌 뒤의 Esc는 원래대로 EXIT 요청")
+	_key(title, KEY_F2)
+	_key(title, KEY_ENTER)
+	_check(not settings.is_open() and closes == [false, true] and starts[0] == 0 and not title.is_starting() and GameState.credit == 0, "Enter: 저장하고 닫기이고 START는 아님")
+	title.free()
+	await get_tree().process_frame
+	# START가 받아들여진 뒤에는 열리지 않음
+	var started: TitleScreen = _make_title()
+	await get_tree().process_frame
+	started.press_start()
+	_key(started, KEY_F2)
+	_check(not started.settings_screen().is_open() and not started.open_settings(), "START 뒤(소리 대기 중)에는 F2가 열리지 않음")
+	started.free()
+	await get_tree().process_frame
+	_settings_end()
+
+
+func _test_settings_layout_and_tabs() -> void:
+	_settings_begin()
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var settings: SettingsScreen = title.settings_screen()
+	for node_name: String in ["MainPanel", "FooterPanel", "TitleLabel", "Tab0", "Tab1", "Tab2", "Rows", "HintLabel", "DefaultsButton", "CancelButton", "SaveButton"]:
+		_check(settings.get_node_or_null(node_name) != null, "설정 화면 노드 있음: %s" % node_name)
+	var main_panel: Panel = settings.get_node("MainPanel")
+	var footer: Panel = settings.get_node("FooterPanel")
+	_check(main_panel.position == Vector2(57, 9) and main_panel.size == Vector2(526, 345) and footer.position == Vector2(57, 414) and footer.size == Vector2(526, 57), "패널 위치·크기 (시작 화면 패널과 같은 자리)")
+	_check(settings.defaults_button().position == Vector2(85, 424) and settings.cancel_button().position == Vector2(245, 424) and settings.save_button().position == Vector2(405, 424) and settings.save_button().size == Vector2(150, 36), "하단 버튼 3개 위치·크기")
+	_check(settings.defaults_button().text == "기본값으로" and settings.cancel_button().text == "취소" and settings.save_button().text == "저장하고 닫기", "하단 버튼 글자")
+	_check(settings.tab_button(0).text == "소리·AUTO" and settings.tab_button(1).text == "크레딧" and settings.tab_button(2).text == "연출" and settings.tab_button(0).position == Vector2(87, 42), "탭 버튼 3개 글자·위치")
+	settings.open()
+	_check(settings.tab() == 0 and settings.row_keys() == ["sfx_volume_db", "bgm_volume_db", "bgm_enabled", "auto_stop_on_win_at", "auto_effect_scale"], "소리·AUTO 탭의 줄 5개")
+	settings.select_tab(1)
+	_check(settings.row_keys() == ["start_credit", "continue_credit", "continue_max", "coin_amount", "best", "best_reset"], "크레딧 탭의 줄 (개발 빌드: COIN 지급량 포함)")
+	settings.select_tab(2)
+	_check(settings.row_keys() == ["countup_small_sec", "countup_mid_sec", "countup_big_sec", "win_mid_ratio", "win_big_ratio"], "연출 탭의 줄 5개")
+	var within: bool = true
+	for tab_index: int in 3:
+		settings.select_tab(tab_index)
+		for key: String in settings.row_keys():
+			var row: Control = settings.row_node(key)
+			within = within and row.position.x >= 57 and row.position.x + row.size.x <= 583 and row.position.y >= 82 and row.position.y + row.size.y <= 322
+	_check(within, "모든 줄이 큰 패널 안, 안내 글자 위에 들어감")
+	_check(settings.row_node("win_mid_ratio").position == Vector2(69, 82 + 30 * 3), "줄 위치: x 69, y = 82 + 30 × 줄 번호")
+	# 탭 이동: 클릭 / Tab / Shift+Tab / PageUp·PageDown (돌아서 이어짐)
+	settings.select_tab(0)
+	settings.tab_button(1).pressed.emit()
+	_check(settings.tab() == 1, "탭 버튼 클릭")
+	_key(title, KEY_TAB)
+	_check(settings.tab() == 2, "Tab: 다음 탭")
+	_key(title, KEY_TAB)
+	_check(settings.tab() == 0, "Tab: 마지막 탭에서 처음으로")
+	_key_shift(title, KEY_TAB)
+	_check(settings.tab() == 2, "Shift+Tab: 이전 탭 (처음에서 마지막으로)")
+	_key(title, KEY_PAGEUP)
+	_check(settings.tab() == 1, "PageUp: 이전 탭")
+	_key(title, KEY_PAGEDOWN)
+	_key(title, KEY_PAGEDOWN)
+	_check(settings.tab() == 0, "PageDown: 다음 탭 (돌아서 처음으로)")
+	# 줄 선택: ↑/↓ (돌아서 이어짐), 탭을 바꾸면 첫 줄
+	_check(settings.selected_key() == "sfx_volume_db", "탭을 열면 첫 줄이 선택됨")
+	_key(title, KEY_UP)
+	_check(settings.selected_key() == "auto_effect_scale", "↑: 첫 줄에서 마지막 줄로")
+	_key(title, KEY_DOWN)
+	_check(settings.selected_key() == "sfx_volume_db", "↓: 마지막 줄에서 첫 줄로")
+	_key(title, KEY_DOWN)
+	_check(settings.selected_key() == "bgm_volume_db" and (settings.row_node("bgm_volume_db").get_node("Highlight") as ColorRect).visible and not (settings.row_node("sfx_volume_db").get_node("Highlight") as ColorRect).visible, "↓: 다음 줄, 선택 막대는 한 줄에만")
+	settings.select_tab(1)
+	_check(settings.selected_key() == "start_credit", "탭을 바꾸면 그 탭의 첫 줄이 선택됨")
+	settings.cancel()
+	title.free()
+	await get_tree().process_frame
+	# 릴리즈 빌드(dev_build false): 개발 전용 줄·DEV 라벨 없음
+	var dev_before: bool = GameState.dev_build
+	GameState.dev_build = false
+	var release: TitleScreen = _make_title()
+	await get_tree().process_frame
+	release.open_settings()
+	release.settings_screen().select_tab(1)
+	_check(release.settings_screen().row_keys() == ["start_credit", "continue_credit", "continue_max", "best", "best_reset"] and release.settings_screen().row_node("coin_amount") == null, "릴리즈 빌드: COIN 지급량 줄이 없음 (밸런스 줄은 어디에도 없음)")
+	_check(release.get_node_or_null("DevLabel") == null, "릴리즈 빌드: DEV 라벨 노드를 만들지 않음")
+	release.settings_screen().cancel()
+	release.free()
+	await get_tree().process_frame
+	GameState.dev_build = true
+	var dev: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var dev_label: Label = dev.get_node_or_null("DevLabel") as Label
+	_check(dev_label != null and dev_label.text == "DEV" and dev_label.mouse_filter == Control.MOUSE_FILTER_IGNORE, "개발 빌드: 오른쪽 아래에 DEV 라벨")
+	_check(dev_label.position == Vector2(583 - 48 - 6, 414 + 6) and dev.get_node("BottomPanel").get_rect().encloses(dev_label.get_rect()), "DEV 라벨은 하단 패널 오른쪽 안")
+	dev.free()
+	await get_tree().process_frame
+	GameState.dev_build = dev_before
+	_settings_end()
+
+
+func _test_settings_values() -> void:
+	_settings_begin()
+	var feel: FeelConfig = FeelConfig.load_from_file()
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var settings: SettingsScreen = title.settings_screen()
+	var bank: SoundBank = title.sound_bank()
+	title.open_settings()
+	_check(settings.value_text("sfx_volume_db") == "%d dB" % int(feel.sfx_volume_db) and settings.value_text("bgm_enabled") == "켜짐" and settings.value_text("auto_stop_on_win_at") == "사용 안 함", "처음 값 표시는 기본값(feel.json·balance.json)")
+	var all_white: bool = true
+	for key: String in settings.row_keys():
+		all_white = all_white and (settings.value_is_changed(key) == false)
+	_check(all_white and settings.value_label("sfx_volume_db").get_theme_color("font_color") == Color("ffffff"), "기본값과 같으면 흰색 (노랑 아님)")
+	# SFX 볼륨: ←/→ 1dB, Shift 5dB, 만지는 동안 버스에 바로 반영 + 소리 확인용 효과음
+	bank.clear_requests()
+	_key(title, KEY_RIGHT)
+	_check(is_equal_approx(_sfx_db(), feel.sfx_volume_db + 1.0) and settings.value_text("sfx_volume_db") == "%d dB" % int(feel.sfx_volume_db + 1.0), "→: 효과음 볼륨 +1 dB가 버스에 즉시 반영")
+	_check(_sound_count(bank, SoundBank.NAME_BUTTON) == 1, "효과음 볼륨을 바꾸면 확인용 소리가 남")
+	_check(settings.value_is_changed("sfx_volume_db") and settings.value_label("sfx_volume_db").get_theme_color("font_color") == Color("ffd23a"), "기본값과 다르면 노랑")
+	_check(settings.draft().get_or("sfx_volume_db", -99.0) == feel.sfx_volume_db + 1.0, "초안에 저장될 값으로 들어감")
+	_key(title, KEY_LEFT)
+	_check(not settings.value_is_changed("sfx_volume_db") and not settings.draft().has_value("sfx_volume_db") and settings.value_label("sfx_volume_db").get_theme_color("font_color") == Color("ffffff"), "기본값으로 돌아오면 저장 대상에서 빠지고 흰색")
+	_key_shift(title, KEY_LEFT)
+	_check(is_equal_approx(_sfx_db(), feel.sfx_volume_db - 5.0), "Shift+←: 효과음 볼륨 -5 dB")
+	for i: int in 20:
+		_key_shift(title, KEY_LEFT)
+	_check(is_equal_approx(_sfx_db(), -40.0) and settings.value_text("sfx_volume_db") == "-40 dB", "최소 -40 dB에서 멈춤")
+	# BGM 볼륨·켜기/끄기
+	_key(title, KEY_DOWN)
+	_key(title, KEY_RIGHT)
+	_check(is_equal_approx(_bgm_db(), feel.bgm_volume_db + 1.0) and settings.value_is_changed("bgm_volume_db"), "BGM 볼륨 +1 dB가 버스에 즉시 반영")
+	_key(title, KEY_DOWN)
+	_check(settings.selected_key() == "bgm_enabled" and not _bgm_muted(), "BGM 줄 선택, 처음엔 켜짐")
+	_key(title, KEY_RIGHT)
+	_check(_bgm_muted() and settings.value_text("bgm_enabled") == "꺼짐" and settings.value_is_changed("bgm_enabled"), "BGM 끄기: 버스 mute + 노랑")
+	_key(title, KEY_LEFT)
+	_check(not _bgm_muted() and settings.value_text("bgm_enabled") == "켜짐" and not settings.value_is_changed("bgm_enabled"), "BGM 다시 켜기: 어느 화살표든 반전, 기본값이라 저장 대상에서 빠짐")
+	# AUTO
+	_key(title, KEY_DOWN)
+	_key(title, KEY_RIGHT)
+	_check(settings.value_text("auto_stop_on_win_at") == "1,000" and settings.value_is_changed("auto_stop_on_win_at"), "AUTO 큰 당첨 정지: 사용 안 함 → 1,000")
+	_key_shift(title, KEY_RIGHT)
+	_check(settings.value_text("auto_stop_on_win_at") == "11,000", "Shift: +10,000")
+	_key(title, KEY_LEFT)
+	_key(title, KEY_LEFT)
+	_key_shift(title, KEY_LEFT)
+	_check(settings.value_text("auto_stop_on_win_at") == "사용 안 함" and not settings.value_is_changed("auto_stop_on_win_at"), "0 아래로는 내려가지 않고 '사용 안 함'(기본값)")
+	_key(title, KEY_DOWN)
+	_key(title, KEY_RIGHT)
+	_check(settings.value_text("auto_effect_scale") == "×%.1f" % (feel.auto_effect_scale + 0.1), "AUTO 연출 배율 +0.1")
+	# 마우스: 화살표 버튼
+	settings.arrow_button("sfx_volume_db", 1).pressed.emit()
+	_check(settings.selected_key() == "sfx_volume_db" and is_equal_approx(_sfx_db(), -39.0), "마우스: 화살표 클릭이 그 줄을 선택하고 한 단계 바꿈")
+	_check(settings.arrow_button("sfx_volume_db", -1).size == Vector2(28, 26) and settings.arrow_button("sfx_volume_db", -1).text == "<" and settings.arrow_button("sfx_volume_db", 1).text == ">", "화살표 버튼 모양")
+	# 크레딧 탭: 단계 값 (기본값은 economy.json에서 읽어 비교)
+	var eco: Dictionary = GameState.load_economy()
+	settings.select_tab(1)
+	_key(title, KEY_RIGHT)
+	_check(settings.value_text("start_credit") == GameOverOverlay.format_amount(int(eco["start_credit"]) + 100) and settings.value_is_changed("start_credit"), "시작 크레딧 ←/→ 100씩")
+	_key_shift(title, KEY_RIGHT)
+	_check(settings.value_text("start_credit") == GameOverOverlay.format_amount(int(eco["start_credit"]) + 1100), "시작 크레딧 Shift 1,000씩")
+	_key(title, KEY_DOWN)
+	_key(title, KEY_LEFT)
+	_check(settings.value_text("continue_credit") == GameOverOverlay.format_amount(int(eco["continue_credit"]) - 100), "CONTINUE 코인 ←/→ 100씩")
+	for i: int in 3:
+		_key_shift(title, KEY_LEFT)
+	_check(settings.value_text("continue_credit") == "1", "CONTINUE 코인은 1에서 멈춤")
+	_key(title, KEY_DOWN)
+	_key(title, KEY_RIGHT)
+	_check(settings.value_text("continue_max") == "%d회" % (int(eco["continue_max"]) + 1), "CONTINUE 횟수 +1")
+	_key_shift(title, KEY_LEFT)
+	_check(settings.value_text("continue_max") == "0회", "CONTINUE 횟수 0에서 멈춤")
+	_key(title, KEY_DOWN)
+	_check(settings.selected_key() == "coin_amount", "개발 빌드: COIN 지급량 줄")
+	_key(title, KEY_RIGHT)
+	_check(settings.value_text("coin_amount") == GameOverOverlay.format_amount(int(eco["coin_amount"]) + 10), "COIN 지급량 ←/→ 10씩")
+	_key_shift(title, KEY_RIGHT)
+	_check(settings.value_text("coin_amount") == GameOverOverlay.format_amount(int(eco["coin_amount"]) + 110), "COIN 지급량 Shift 100씩")
+	# 연출 탭: 시간·기준, 중 < 대
+	settings.select_tab(2)
+	_key(title, KEY_RIGHT)
+	_check(settings.value_text("countup_small_sec") == "%.2f초" % (feel.countup_small_sec + 0.1) and settings.value_is_changed("countup_small_sec"), "정산 연출 소: 0.1초씩")
+	_key(title, KEY_DOWN)
+	_key_shift(title, KEY_RIGHT)
+	_check(settings.value_text("countup_mid_sec") == "%.2f초" % (feel.countup_mid_sec + 0.5), "정산 연출 중: Shift 0.5초씩")
+	_key(title, KEY_DOWN)
+	_key(title, KEY_DOWN)
+	_check(settings.selected_key() == "win_mid_ratio", "당첨 중 기준 줄")
+	for i: int in 30:
+		_key_shift(title, KEY_RIGHT)
+	_check(is_equal_approx(float(settings.effective("win_mid_ratio")), float(settings.effective("win_big_ratio")) - 0.1), "당첨 중 기준은 대 기준보다 0.1 작은 값에서 멈춤 (중 < 대)")
+	_key(title, KEY_DOWN)
+	for i: int in 30:
+		_key_shift(title, KEY_LEFT)
+	_check(is_equal_approx(float(settings.effective("win_big_ratio")), float(settings.effective("win_mid_ratio")) + 0.1), "당첨 대 기준은 중 기준보다 0.1 큰 값에서 멈춤")
+	_check(float(settings.effective("win_mid_ratio")) < float(settings.effective("win_big_ratio")), "어떤 조작으로도 중 ≥ 대가 되지 않음")
+	settings.cancel()
+	title.free()
+	await get_tree().process_frame
+	_settings_end()
+
+
+func _test_settings_save_and_cancel() -> void:
+	_settings_begin()
+	var feel: FeelConfig = FeelConfig.load_from_file()
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var settings: SettingsScreen = title.settings_screen()
+	var closes: Array[bool] = []
+	settings.closed.connect(func(saved: bool) -> void: closes.append(saved))
+	var base_start: int = GameState.start_credit
+	var base_continue: int = GameState.continue_credit
+	# 취소: 파일·GameState·소리가 모두 원래대로
+	title.open_settings()
+	_key_shift(title, KEY_RIGHT)
+	_key(title, KEY_DOWN)
+	_key(title, KEY_DOWN)
+	_key(title, KEY_RIGHT)
+	settings.select_tab(1)
+	_key_shift(title, KEY_RIGHT)
+	_check(_sfx_db() != feel.sfx_volume_db and _bgm_muted() and settings.draft().values.size() == 3, "준비: 소리·BGM·시작 크레딧을 바꿔 둠")
+	_key(title, KEY_ESCAPE)
+	_check(closes == [false] and not settings.is_open(), "Esc/취소: 닫힘(saved=false)")
+	_check(is_equal_approx(_sfx_db(), feel.sfx_volume_db) and is_equal_approx(_bgm_db(), feel.bgm_volume_db) and not _bgm_muted(), "취소: 소리가 원래대로 복구 (볼륨·BGM mute)")
+	_check(not FileAccess.file_exists(SETTINGS_TEST_DIR + "settings.json") and UserSettings.active().is_empty() and GameState.start_credit == base_start, "취소: 파일을 쓰지 않고 지금 설정·시작 크레딧도 그대로")
+	title.open_settings()
+	_check(settings.draft().is_empty() and settings.tab() == 0, "다시 열면 취소한 값이 남아 있지 않음 (첫 탭, 초안 비어 있음)")
+	settings.cancel_button().pressed.emit()
+	_check(closes == [false, false], "취소 버튼도 같은 동작")
+	# 저장: 바꾼 키만 파일에, GameState 반영, 소리 확정
+	var bank: SoundBank = title.sound_bank()
+	title.open_settings()
+	_key(title, KEY_RIGHT)
+	_key(title, KEY_RIGHT)
+	_key(title, KEY_DOWN)
+	_key(title, KEY_DOWN)
+	_key(title, KEY_RIGHT)
+	_key(title, KEY_DOWN)
+	_key_shift(title, KEY_RIGHT)
+	settings.select_tab(1)
+	_key_shift(title, KEY_RIGHT)
+	_key(title, KEY_DOWN)
+	_key(title, KEY_RIGHT)
+	settings.select_tab(2)
+	_key_shift(title, KEY_RIGHT)
+	bank.clear_requests()
+	settings.save_button().pressed.emit()
+	_check(closes == [false, false, true] and not settings.is_open() and settings.last_save_ok, "저장하고 닫기: 닫힘(saved=true), 파일 쓰기 성공")
+	_check(_sound_count(bank, SoundBank.NAME_BUTTON) >= 1, "저장하면 버튼 소리")
+	var json: JSON = JSON.new()
+	_check(FileAccess.file_exists(SETTINGS_TEST_DIR + "settings.json") and json.parse(FileAccess.get_file_as_string(SETTINGS_TEST_DIR + "settings.json")) == OK, "저장 파일이 생기고 JSON으로 읽힘")
+	var values: Dictionary = (json.data as Dictionary)["values"]
+	_check(int(json.data["version"]) == 1 and values.has("sfx_volume_db") and values.has("bgm_enabled") and values.has("auto_stop_on_win_at") and values.has("start_credit") and values.has("continue_credit") and values.has("countup_small_sec"), "저장 파일: 바꾼 키만 들어 있음 (%s)" % [values.keys()])
+	_check(not values.has("bgm_volume_db") and not values.has("continue_max") and not values.has("win_big_ratio"), "바꾸지 않은 키는 파일에 없음")
+	_check(UserSettings.active().get_or("start_credit", 0) == base_start + 1000 and GameState.start_credit == base_start + 1000, "지금 설정과 GameState 시작 크레딧에 반영")
+	_check(GameState.continue_credit == base_continue + 100 and GameState._auto.stop_on_win_at == 10000, "CONTINUE 코인·AUTO 정지 기준도 GameState에 반영")
+	_check(_bgm_muted() and is_equal_approx(_sfx_db(), feel.sfx_volume_db + 2.0), "저장한 소리 설정이 유지됨 (BGM 꺼짐, 효과음 +2 dB)")
+	# 다음 START부터 새 시작 크레딧
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+	GameState.apply_user_values()
+	title.free()
+	await get_tree().process_frame
+	var started: TitleScreen = (load(TITLE_SCENE_PATH) as PackedScene).instantiate() as TitleScreen
+	started.auto_connect = false
+	add_child(started)
+	started.set_process(false)
+	await get_tree().process_frame
+	started.press_start()
+	_check(GameState.credit == base_start + 1000, "다음 START: 새 시작 크레딧이 지급됨")
+	started.free()
+	await get_tree().process_frame
+	# 다시 열면 저장한 값이 노랑으로 보이고, 값은 설정 파일이 우선
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+	var again: TitleScreen = _make_title()
+	await get_tree().process_frame
+	again.open_settings()
+	var s2: SettingsScreen = again.settings_screen()
+	_check(s2.value_is_changed("sfx_volume_db") and s2.value_label("sfx_volume_db").get_theme_color("font_color") == Color("ffd23a") and s2.value_text("bgm_enabled") == "꺼짐", "다시 열면 저장된 값이 노랑으로 보임")
+	_check(not s2.value_is_changed("bgm_volume_db") and s2.value_label("bgm_volume_db").get_theme_color("font_color") == Color("ffffff"), "저장되지 않은 키는 흰색 (feel.json을 고치면 계속 반영됨)")
+	s2.cancel()
+	again.free()
+	await get_tree().process_frame
+	_settings_end()
+
+
+func _test_settings_resets() -> void:
+	_settings_begin()
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var settings: SettingsScreen = title.settings_screen()
+	var feel: FeelConfig = FeelConfig.load_from_file()
+	HighScore.active().submit(5000, false)
+	title.open_settings()
+	_key_shift(title, KEY_RIGHT)
+	settings.select_tab(1)
+	_key(title, KEY_RIGHT)
+	# 기본값으로 되돌리기: 두 번 눌러야 실행, 다른 조작이 끼면 확인이 풀림
+	settings.defaults_button().pressed.emit()
+	_check(settings.defaults_button().text == "한 번 더 누르세요" and settings.draft().values.size() == 2, "기본값으로: 첫 클릭은 확인 글자만 바뀌고 값은 그대로")
+	settings.select_tab(0)
+	_check(settings.defaults_button().text == "기본값으로" and settings.draft().values.size() == 2, "다른 조작(탭 이동)이 끼면 확인이 풀림")
+	settings.defaults_button().pressed.emit()
+	_key(title, KEY_DOWN)
+	_check(settings.defaults_button().text == "기본값으로", "다른 조작(줄 이동)도 확인을 풂")
+	settings.defaults_button().pressed.emit()
+	settings.defaults_button().pressed.emit()
+	_check(settings.draft().is_empty() and settings.defaults_button().text == "기본값으로" and is_equal_approx(_sfx_db(), feel.sfx_volume_db), "두 번째 클릭: 설정 값 전체가 기본값으로 (소리도 즉시 원래대로)")
+	settings.select_tab(1)
+	_check(settings.value_text("start_credit") == GameOverOverlay.format_amount(GameState.load_economy()["start_credit"]) and not settings.value_is_changed("start_credit"), "기본값으로 뒤에는 economy.json 값 표시, 노랑 아님")
+	_check(HighScore.active().best_peak_credit == 5000, "기본값으로 되돌려도 최고 기록은 그대로")
+	_check(not FileAccess.file_exists(SETTINGS_TEST_DIR + "settings.json"), "기본값으로 눌러도 저장 전에는 파일이 바뀌지 않음")
+	# 이미 저장된 설정을 기본값으로 되돌리고 저장 → 파일은 빈 설정
+	settings.cancel()
+	var saved: UserSettings = UserSettings.new()
+	saved.set_value("start_credit", 9000)
+	UserSettings.commit(saved)
+	title.open_settings()
+	_check(settings.value_is_changed("sfx_volume_db") == false and settings.draft().get_or("start_credit", 0) == 9000, "저장된 설정을 읽어 초안으로")
+	settings.press_defaults()
+	settings.press_defaults()
+	settings.save()
+	_check(UserSettings.load_from(SETTINGS_TEST_DIR + "settings.json").is_empty() and UserSettings.active().is_empty() and GameState.start_credit == GameState.load_economy()["start_credit"], "기본값으로 + 저장: 파일이 빈 설정, GameState도 economy.json 값으로 복귀")
+	# 최고 기록 초기화: 두 번 눌러야 실행, Space로도 가능, 저장 버튼과 무관하게 바로 지워짐
+	title.open_settings()
+	settings.select_tab(1)
+	_check(settings.value_text("best") == "5,000", "최고 기록 표시 5,000")
+	var action: Button = settings.action_button()
+	_check(action.text == "초기화", "최고 기록 초기화 버튼 글자")
+	action.pressed.emit()
+	_check(action.text == "한 번 더 누르면 초기화" and HighScore.active().best_peak_credit == 5000 and settings.selected_key() == "best_reset", "첫 클릭: 확인 글자만 바뀌고 기록은 그대로 (그 줄이 선택됨)")
+	_key(title, KEY_UP)
+	_check(action.text == "초기화" and HighScore.active().best_peak_credit == 5000, "다른 조작이 끼면 확인이 풀림")
+	_key(title, KEY_DOWN)
+	_key(title, KEY_SPACE)
+	_check(action.text == "한 번 더 누르면 초기화", "Space로도 확인 단계로")
+	_key(title, KEY_SPACE)
+	_check(HighScore.active().best_peak_credit == 0 and settings.value_text("best") == "기록 없음" and action.text == "초기화", "두 번째에 최고 기록 초기화, 표시도 '기록 없음'")
+	_check(HighScore.load_from(SETTINGS_TEST_DIR + "highscore.json").best_peak_credit == 0, "최고 기록 파일에도 반영")
+	settings.cancel()
+	_check(title.best_label().visible == false, "닫으면 시작 화면 BEST 표시도 사라짐")
+	title.free()
+	await get_tree().process_frame
+	_settings_end()
+
+
+## 게임 화면이 설정을 받는지: 연출 키 덮어쓰기, F6 뒤에도 유지, BGM 끄기, 창 닫기 기록, 꺼져 있으면 무시
+func _test_settings_applied_in_game() -> void:
+	_settings_begin()
+	var feel: FeelConfig = FeelConfig.load_from_file()
+	var user: UserSettings = UserSettings.new()
+	user.set_value("countup_big_sec", 4.0)
+	user.set_value("win_mid_ratio", 3.0)
+	user.set_value("bgm_volume_db", -20.0)
+	user.set_value("bgm_enabled", false)
+	UserSettings.commit(user)
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+	var main: Control = (load(MAIN_SCENE_FILE) as PackedScene).instantiate()
+	main.settle_presentation = false
+	add_child(main)
+	main.set_process(false)
+	await get_tree().process_frame
+	var pending: FeelConfig = main.pending_feel()
+	_check(pending.countup_big_sec == 4.0 and pending.win_mid_ratio == 3.0 and pending.bgm_volume_db == -20.0, "main: 설정의 연출 키가 feel.json 값 위에 덮어써짐")
+	_check(pending.countup_small_sec == feel.countup_small_sec and pending.win_big_ratio == feel.win_big_ratio and pending.sfx_volume_db == feel.sfx_volume_db, "main: 안 바꾼 키는 feel.json 값 그대로")
+	_check(_bgm_muted(), "main: BGM 끄기 설정이 버스 mute로 반영")
+	_check(main.reload_feel() and main.pending_feel().countup_big_sec == 4.0 and main.pending_feel().win_mid_ratio == 3.0 and main.pending_feel().bgm_volume_db == -20.0, "F6 재로딩 뒤에도 설정 키의 덮어쓰기가 유지됨")
+	_check(main.pending_feel().countup_small_sec == feel.countup_small_sec, "F6 재로딩: 안 바꾼 키는 계속 feel.json을 따름")
+	# 창 닫기: 판의 최고 크레딧을 기록 (더 클 때만, 테스트 판 제외)
+	GameState.run_peak_credit = 9000
+	GameState.run_tainted = false
+	main._notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	_check(HighScore.active().best_peak_credit == 9000 and HighScore.load_from(SETTINGS_TEST_DIR + "highscore.json").best_peak_credit == 9000, "창 닫기: 최고 크레딧 9,000을 기록 (파일에도)")
+	GameState.run_peak_credit = 8000
+	main._notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	_check(HighScore.active().best_peak_credit == 9000, "창 닫기: 더 작으면 기록하지 않음")
+	GameState.run_peak_credit = 99999
+	GameState.run_tainted = true
+	main._notification(Node.NOTIFICATION_WM_CLOSE_REQUEST)
+	_check(HighScore.active().best_peak_credit == 9000, "창 닫기: 테스트 판(run_tainted)은 기록하지 않음")
+	GameState.run_tainted = false
+	main.free()
+	await get_tree().process_frame
+	SettingsScreen.apply_bgm_mute(true)
+	# 설정 사용이 꺼져 있으면(헤드리스 테스트) 파일이 있어도 무시
+	UserSettings.configure(false)
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+	var plain: Control = (load(MAIN_SCENE_FILE) as PackedScene).instantiate()
+	plain.settle_presentation = false
+	add_child(plain)
+	plain.set_process(false)
+	await get_tree().process_frame
+	_check(plain.pending_feel().countup_big_sec == feel.countup_big_sec and plain.pending_feel().win_mid_ratio == feel.win_mid_ratio and not _bgm_muted(), "설정 사용이 꺼져 있으면 저장 파일이 있어도 feel.json 값 그대로 (테스트 격리)")
+	plain.free()
+	await get_tree().process_frame
+	_settings_end()
+
+
+func _test_settings_dev_and_best() -> void:
+	_settings_begin()
+	# 시작 화면 BEST 표시: 기록이 있을 때만, 작은 글자로 EXIT 아래
+	var empty: TitleScreen = _make_title()
+	await get_tree().process_frame
+	_check(not empty.best_label().visible, "최고 기록이 없으면 BEST 표시가 숨겨짐")
+	empty.free()
+	await get_tree().process_frame
+	HighScore.active().submit(12345, false)
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var best: Label = title.best_label()
+	_check(best.visible and best.text == "BEST 12,345", "최고 기록이 있으면 시작 화면에 BEST 12,345")
+	_check(best.position == Vector2(57, 324) and best.size == Vector2(526, 20) and best.mouse_filter == Control.MOUSE_FILTER_IGNORE, "BEST 라벨 위치·크기 (큰 패널 안, EXIT 버튼 아래)")
+	_check(best.position.y >= title.exit_button().position.y + title.exit_button().size.y and best.position.y + best.size.y <= 354, "BEST는 EXIT 버튼과 겹치지 않고 큰 패널 안")
+	_check(title.logo().position == Vector2(140, 30) and title.start_button().position == Vector2(240, 222) and title.exit_button().position == Vector2(240, 276), "기존 시작 화면 요소 위치 불변 (로고·START·EXIT)")
+	title.open_settings()
+	title.settings_screen().select_tab(1)
+	_check(title.settings_screen().value_text("best") == "12,345", "설정 화면의 최고 기록 줄도 12,345")
+	title.settings_screen().cancel()
+	title.free()
+	await get_tree().process_frame
+	# GAME OVER가 오면 최고 기록 (일반 판만)
+	UserSettings.configure(true, SETTINGS_TEST_DIR)
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+	GameState.new_game()
+	HighScore.active().reset()
+	for i: int in 400:
+		if GameState.is_game_over():
+			break
+		GameState.credit = 8
+		GameState.bet = 8
+		GameState.play_spin()
+	_check(GameState.is_game_over() and HighScore.active().best_peak_credit == GameState.run_peak_credit and GameState.run_peak_credit >= GameState.start_credit, "GAME OVER가 오면 그 판의 최고 크레딧이 최고 기록으로 남음")
+	_check(HighScore.load_from(SETTINGS_TEST_DIR + "highscore.json").best_peak_credit == GameState.run_peak_credit, "최고 기록 파일에도 저장됨")
+	_settings_end()
