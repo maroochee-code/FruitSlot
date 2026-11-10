@@ -32,6 +32,10 @@ const SPECS: Dictionary = {
 	"bgm_to_main_sec": [1.0, 0.0, 5.0],
 	"bgm_loop_trim_sec": [2.0, 0.0, 10.0],
 	"bgm_loop_fade_sec": [1.0, 0.0, 5.0],
+	"bulb_idle_sec": [0.8, 0.1, 5.0],
+	"bulb_spin_step_sec": [0.06, 0.01, 1.0],
+	"bulb_win_flash_sec": [0.12, 0.02, 1.0],
+	"bulb_fever_sec": [0.2, 0.02, 2.0],
 }
 ## 릴 수만큼 값이 들어가는 항목. 키: [기본값 목록, 최솟값, 최댓값]
 const REEL_COUNT: int = 3
@@ -97,6 +101,14 @@ var bgm_to_main_sec: float = 1.0
 var bgm_loop_trim_sec: float = 2.0
 ## BGM 반복 때 이전 소리를 줄이며 새 소리를 키우는 시간 (초). bgm_loop_trim_sec보다 클 수 없다.
 var bgm_loop_fade_sec: float = 1.0
+## 전구(보드 링·프레임 소켓): 대기 중 짝수/홀수가 번갈아 깜빡이는 주기 (초)
+var bulb_idle_sec: float = 0.8
+## 전구: 스핀 중 켜진 전구가 한 칸 도는 시간 (초). 작을수록 빨리 돈다
+var bulb_spin_step_sec: float = 0.06
+## 전구: 당첨 때 전부 켜짐/꺼짐이 바뀌는 시간 (초)
+var bulb_win_flash_sec: float = 0.12
+## 전구: 피버·풀 정산 때 노랑/빨강이 바뀌는 시간 (초)
+var bulb_fever_sec: float = 0.2
 ## 파일에서 읽다가 문제가 있어 기본값으로 대체한 항목 설명
 var errors: PackedStringArray = PackedStringArray()
 ## 파일을 읽고 JSON으로 해석하는 데 성공했는지 (항목별 범위 문제와는 별개)

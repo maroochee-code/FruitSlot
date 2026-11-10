@@ -16,6 +16,8 @@
   assets/ui/fever_bg_0~2.png, pool_bg_0~2.png          방사형 줄무늬 배경 프레임 (6-E, 640x414)
   assets/ui/coin_sheet.png      당첨 동전 6프레임 가로 시트 (6-E, 아트 48x8 -> 144x24)
   assets/_preview/6e_*.png      6-E 연출 전체 화면 합성·배너/배경 모음·동전 x6
+  assets/ui/bulbs.png           전구 상태 4개(꺼짐·노랑·빨강·흰색) 가로 시트 (6-F3a, 아트 8x2 -> 24x6)
+  assets/_preview/6f_bulbs.png  전구 시트·소켓 줄 모드별 미리보기
   assets/_preview/6d_screen.png 6-D 전체 화면 근사 합성 (640x480)
   assets/_preview/sheet.png   위 전부를 x3 Nearest로 확대해 한 장에 (6-C 에셋은 이미 3배라 그대로 붙임)
 규칙: 안티앨리어싱·그라데이션 없음(색은 팔레트 몇 가지만), 1px 외곽선, 왼쪽 위 밝게/오른쪽 아래 어둡게 2톤, 하이라이트 점.
@@ -1078,6 +1080,72 @@ def build_6e(base):
     coin_img.save(prev / "6e_coin_x6.png")
 
 
+
+# ------------------------------------------------------------------ 6-F3a 켜진 전구 시트
+
+# 전구 상태: 이름, 면 색, 하이라이트 색 (아트 2x2의 왼쪽 위 한 점)
+BULB_STATES = [
+    ("off", "8a7a3a", "b0a25a"),
+    ("on", "ffe14d", "fff7b8"),
+    ("red", "ff4040", "ff9a9a"),
+    ("white", "ffffff", "ffffff"),
+]
+BULB_ART = 2
+BULB_PX = BULB_ART * 3
+
+
+def bulb_sheet_art():
+    """전구 상태 4개를 가로로 붙인 시트 (아트 8x2). 한 칸 2x2 = 점 4개, 왼쪽 위 한 점이 하이라이트."""
+    c = Canvas(BULB_ART * len(BULB_STATES), BULB_ART)
+    for i, (_, base, hi) in enumerate(BULB_STATES):
+        for dx in range(BULB_ART):
+            for dy in range(BULB_ART):
+                c.set(i * BULB_ART + dx, dy, rgb(hi) if (dx, dy) == (0, 0) else rgb(base))
+    return c
+
+
+def _bulb_state(mode, index, t):
+    """게임의 BulbPattern과 같은 규칙 (미리보기용). mode: idle / spin / win / fever"""
+    idle_sec, spin_step, win_flash, fever_sec = 0.8, 0.06, 0.12, 0.2
+    if mode == "idle":
+        return 1 if (index + int(t / idle_sec)) % 2 == 0 else 0
+    if mode == "spin":
+        return 1 if (index - int(t / spin_step)) % 3 == 0 else 0
+    if mode == "win":
+        return 3 if int(t / win_flash) % 2 == 0 else 0
+    return 1 if int(t / fever_sec) % 2 == 0 else 2
+
+
+def build_6f3a():
+    sheet = scaled(bulb_sheet_art().image())
+    sheet.save(ROOT / "assets/ui/bulbs.png")
+    # 미리보기(x2): 전구 4상태 + 프레임 가로 띠 위 소켓 18개(간격 8아트 = 24px)를 모드별로, 시간 두 장면씩
+    s = 2
+    pad = 12
+    strip_w = 18 * 24 * s
+    rows = [("state", 0.0)] + [(m, t) for m in ("idle", "spin", "win", "fever") for t in (0.0, 0.13)]
+    row_h = BULB_PX * s + pad
+    img = Image.new("RGBA", (strip_w + 160, pad + row_h * len(rows) + BULB_PX * s * 3 + 30), rgb("2a2a44"))
+    d = ImageDraw.Draw(img)
+    y = pad
+    for mode, t in rows:
+        if mode == "state":
+            for i, (name, _, _) in enumerate(BULB_STATES):
+                tile = sheet.crop((i * BULB_PX, 0, (i + 1) * BULB_PX, BULB_PX)).resize((BULB_PX * s * 3, BULB_PX * s * 3), Image.NEAREST)
+                img.alpha_composite(tile, (pad + i * (BULB_PX * s * 3 + 12), y))
+                d.text((pad + i * (BULB_PX * s * 3 + 12), y + BULB_PX * s * 3 + 2), name, fill=(255, 255, 255, 255))
+            y += BULB_PX * s * 3 + pad + 14
+            continue
+        d.rectangle([pad, y - 4, pad + strip_w, y + BULB_PX * s + 4], fill=rgb("1b1f4a"))
+        for i in range(18):
+            st = _bulb_state(mode, i, t)
+            tile = sheet.crop((st * BULB_PX, 0, (st + 1) * BULB_PX, BULB_PX)).resize((BULB_PX * s, BULB_PX * s), Image.NEAREST)
+            img.alpha_composite(tile, (pad + 6 * s + i * 24 * s, y))
+        d.text((pad + strip_w + 8, y), "%s t=%.2f" % (mode, t), fill=(255, 255, 255, 255))
+        y += row_h
+    img.crop((0, 0, img.width, y)).save(ROOT / "assets/_preview/6f_bulbs.png")
+    print("6-F3a: bulbs.png", sheet.size)
+
 # ------------------------------------------------------------------ 저장·미리보기
 
 BIG = {"cherry": big_cherry, "orange": big_orange, "melon": big_melon, "grape": big_grape,
@@ -1171,6 +1239,8 @@ def main():
     print("visible wallpaper px: %d / %d = %.1f%%" % (wall_px, total, wall_px * 100.0 / total))
     # 6-E: 피버·풀 연출 아트 + 동전
     build_6e(screen)
+    # 6-F3a: 켜진 전구 시트
+    build_6f3a()
 
 
 if __name__ == "__main__":

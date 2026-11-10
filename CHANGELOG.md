@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 0.15.0 — 2026-11-10 (6-F3a: 전구 애니메이션)
+
+### 추가
+- 전구 그림 시트 `assets/ui/bulbs.png`(꺼짐·노랑·빨강·흰색, 각 아트 2×2 = 6×6 px, 하이라이트 점 1개). `tools/gen_pixel_assets.py`로 생성, 미리보기 `assets/_preview/6f_bulbs.png`
+- `BulbSheet`(시트 도우미), `BulbPattern`(대기/스핀/당첨/피버 모양 규칙, 순수 계산), `FrameBulbs`(프레임 소켓 18개 위에 켜진 전구를 얹음, 프레임 바로 위·다른 요소 뒤, 클릭 통과)
+- 전구 모양: 대기(짝수/홀수 0.8초 교대) / 스핀(3개 중 1개가 도는 효과, 프레임은 왼쪽→오른쪽) / 당첨(전부 흰색↔꺼짐 번쩍, 당첨선 깜빡임 1.5초 동안) / 피버·풀 정산 직후(노랑↔빨강, 1.5초. 오버레이가 보드를 가리므로 끝난 직후에 보임)
+- `feel.json` 새 키 4개: `bulb_idle_sec`(0.8), `bulb_spin_step_sec`(0.06), `bulb_win_flash_sec`(0.12), `bulb_fever_sec`(0.2). 설명은 `docs/feel.md`
+- `LineOverlay.blink_total_sec()`: 당첨선 깜빡임 시간(1.5초). 전구 번쩍임이 이 시간을 따름 (6-F3b에서 AUTO 대기가 같은 기준을 씀)
+- `scenes/test/bulb_preview.tscn`: 진짜 화면에서 1 대기 / 2 스핀 / 3 당첨 / 4 피버 모양을 키로 바꿔 보는 확인용 씬
+- view_test +39: 시트·모양 규칙·보드/프레임 모드·소켓 좌표(frame.png와 일치)·게임 안 모드 전환·feel 키
+
+### 변경
+- `BoardView`: 전구를 사각형이 아니라 `bulbs.png` 그림으로 그리고, 모양은 `BulbPattern`에 따라 움직임. 시간 0의 대기 모양은 6-B 정적 모양(짝수 켜짐)과 같음
+- view_test의 feel 기본값 검사(6-F1·6-F2)를 "feel.json 파일 값"이 아니라 "코드 기본값 + 파일이 오류 없이 읽힘"으로 바꿈 (사용자가 소리를 듣고 `bgm_volume_db`를 -5로 조정해서 파일 값 검사가 깨졌음)
+- 로직, GameState, balance.json, project.godot, 기존 요소 좌표 변경 없음
+
 ## 0.14.0 — 2026-11-10 (6-F2: BGM)
 
 ### 추가

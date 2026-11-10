@@ -16,6 +16,11 @@ const LINE_EXTEND: float = 20.0
 const BLINK_CYCLES: int = 3
 const BLINK_HALF_SEC: float = 0.25
 const BLINK_LOW_ALPHA: float = 0.15
+## 당첨 선 깜빡임이 끝나기까지 걸리는 시간 (초). 전구 번쩍임·AUTO 대기가 이 시간을 기준으로 삼는다.
+static func blink_total_sec() -> float:
+	return BLINK_CYCLES * BLINK_HALF_SEC * 2.0
+
+
 ## 라인 순서(A→H)대로 쓰는 선 색
 const LINE_PALETTE: Array[Color] = [
 	Color("ff5a5a"), Color("4fc3f7"), Color("ffd23a"), Color("4cd964"),

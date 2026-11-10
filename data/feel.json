@@ -26,5 +26,9 @@
 	"bgm_to_fever_sec": 0.3,
 	"bgm_to_main_sec": 1.0,
 	"bgm_loop_trim_sec": 2.0,
-	"bgm_loop_fade_sec": 1.0
+	"bgm_loop_fade_sec": 1.0,
+	"bulb_idle_sec": 0.8,
+	"bulb_spin_step_sec": 0.06,
+	"bulb_win_flash_sec": 0.12,
+	"bulb_fever_sec": 0.2
 }

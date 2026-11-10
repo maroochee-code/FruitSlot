@@ -95,6 +95,11 @@ var _bet_box: InfoBox
 var _pool_box: InfoBox
 var _fever_panel: FeverPanel
 var _fever_overlay: FeverOverlay
+## 전구 (6-F3a): 보드 링과 프레임 소켓. 대기/스핀/당첨/피버 모양은 BulbPattern 규칙
+var _board: BoardView
+var _frame_bulbs: FrameBulbs
+## 당첨·피버 전구 모양을 보여 줄 남은 시간 (이 시간이 지나면 대기 모양으로 돌아감)
+var _bulb_hold_left: float = 0.0
 ## 지금 연출 중인 피버 단계 목록과, 그동안 카운터 패널에 보여 주는 숫자 (피버 심볼은 0에서 시작해 단계가 끝나면 초기값)
 var _fever_steps: Array[Dictionary] = []
 var _fever_counts_shown: Dictionary[String, int] = {}
@@ -194,6 +199,7 @@ func _announce_feel(message: String) -> void:
 ## 시간을 delta초 진행한다. 릴 움직임, 자동 정지, 정산 대기를 처리한다. (테스트는 이걸 직접 부른다.)
 func advance(delta: float) -> void:
 	_bgm.advance(delta)
+	_advance_bulbs(delta)
 	_advance_blink(delta)
 	if _spin.is_active():
 		_spin.advance(delta)
@@ -264,6 +270,37 @@ func press_cancel() -> bool:
 ## 효과음 도우미 (테스트용)
 func sound_bank() -> SoundBank:
 	return _sound
+
+
+## 전구 모양을 바꾼다. hold_sec > 0이면 그 시간이 지난 뒤 대기 모양으로 돌아간다.
+func _set_bulb_mode(mode: int, hold_sec: float = 0.0) -> void:
+	_bulb_hold_left = hold_sec
+	_board.set_mode(mode)
+	_frame_bulbs.set_mode(mode)
+
+
+func _advance_bulbs(delta: float) -> void:
+	_board.advance(delta)
+	_frame_bulbs.advance(delta)
+	if _bulb_hold_left <= 0.0:
+		return
+	_bulb_hold_left -= delta
+	if _bulb_hold_left <= 0.0:
+		_set_bulb_mode(BulbPattern.Mode.IDLE)
+
+
+## 지금 전구 모양 (BulbPattern.Mode, 테스트용)
+func bulb_mode() -> int:
+	return _board.mode()
+
+
+## 보드 링 / 프레임 소켓 (테스트용)
+func board_view() -> BoardView:
+	return _board
+
+
+func frame_bulbs() -> FrameBulbs:
+	return _frame_bulbs
 
 
 ## BGM 재생기 (테스트·미리보기용)
@@ -447,6 +484,9 @@ func _on_spin_started(result: SpinResult) -> void:
 	_feel = _latest_feel
 	_sound.set_sfx_volume_db(_feel.sfx_volume_db)
 	_bgm.apply_feel(_feel)
+	_board.apply_feel(_feel)
+	_frame_bulbs.apply_feel(_feel)
+	_set_bulb_mode(BulbPattern.Mode.SPIN)
 	_sound.play(SoundBank.NAME_START)
 	GameState.auto_gap_sec = _feel.auto_spin_gap_sec
 	_spin.begin(result.stops, _feel)
@@ -469,6 +509,7 @@ func _on_reel_stopped(index: int) -> void:
 ## 세 릴이 모두 멈춤: 잠시 뒤(result_delay) 정산하고 당첨 연출을 시작한다.
 func _on_all_stopped() -> void:
 	_sound.stop_loop(SoundBank.NAME_REEL_SPIN)
+	_set_bulb_mode(BulbPattern.Mode.IDLE)
 	_settle_left = _feel.result_delay
 	_settling = true
 	if _settle_left <= 0.0:
@@ -483,6 +524,9 @@ func _settle_now() -> void:
 	_wins_shown = true
 	_fever_steps = FeverOverlay.build_steps(_last_result, _data)
 	if _fever_steps.is_empty():
+		# 당첨선이 깜빡이는 동안 전구도 번쩍인다 (피버·풀이 있으면 연출이 끝난 뒤 피버 전구)
+		if not _last_result.line_wins.is_empty():
+			_set_bulb_mode(BulbPattern.Mode.WIN, LineOverlay.blink_total_sec())
 		# 피버·풀 연출이 없을 때만 당첨 크기 소리 (연출이 있으면 연출 소리가 당첨 소리다)
 		var win_name: StringName = SoundBank.win_sound_for(_last_result.total_payout(), _last_result.total_bet, _feel.win_mid_ratio, _feel.win_big_ratio)
 		if win_name != &"":
@@ -530,6 +574,8 @@ func _on_fever_step_started(index: int) -> void:
 
 func _on_fever_finished(skipped: bool) -> void:
 	_bgm.switch_to(BgmPlayer.TRACK_MAIN)
+	# 연출 오버레이가 보드를 가리고 있었으므로 끝난 직후에 피버 전구 (6-F3b에서는 정산 연출 시간 동안)
+	_set_bulb_mode(BulbPattern.Mode.FEVER, LineOverlay.blink_total_sec())
 	# 건너뛰면 재생 중인 연출 소리를 끊고 마무리음도 없다. 끝까지 봤을 때만 마무리음.
 	if skipped:
 		_sound.cut_oneshots()
@@ -633,13 +679,18 @@ func _build_background() -> void:
 	frame.set_anchors_preset(Control.PRESET_FULL_RECT)
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(frame)
+	# 6-F3a: 프레임 가로 띠의 전구 소켓 18개 (프레임 바로 위, 다른 요소 뒤)
+	_frame_bulbs = FrameBulbs.new()
+	add_child(_frame_bulbs)
 
 
 func _build_board() -> void:
-	var board: BoardView = BoardView.new()
-	board.name = "Board"
-	board.position = BOARD_ORIGIN
-	add_child(board)
+	_board = BoardView.new()
+	_board.name = "Board"
+	_board.position = BOARD_ORIGIN
+	add_child(_board)
+	_board.apply_feel(_feel)
+	_frame_bulbs.apply_feel(_feel)
 
 
 func _build_reels() -> void:

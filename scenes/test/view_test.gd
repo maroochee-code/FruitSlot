@@ -61,6 +61,7 @@ func _ready() -> void:
 	await _test_overlay_art()
 	await _test_sound()
 	await _test_bgm()
+	await _test_bulbs()
 	await _test_auto_view()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
@@ -180,6 +181,156 @@ func _test_board_layout(main: Control) -> void:
 	_check(label_count > 0 and labels_ok, "라인 라벨 33×21, 보드 바깥 (왼쪽 x=6 / 오른쪽 x=396 / 위쪽 y=9)")
 
 
+## 6-F3a: 전구 (시트 그림, 모양 규칙, 보드 링·프레임 소켓, 모드 전환, feel 키)
+func _test_bulbs() -> void:
+	_test_bulb_sheet_and_pattern()
+	_test_bulb_nodes()
+	await _test_bulb_modes_in_game()
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+
+
+func _test_bulb_sheet_and_pattern() -> void:
+	var sheet: Texture2D = BulbSheet.sheet()
+	_check(sheet != null and sheet.get_size() == Vector2(24, 6), "bulbs.png: 전구 4상태 가로 시트 24×6")
+	var frames_ok: bool = true
+	for state: int in BulbSheet.STATE_COUNT:
+		frames_ok = frames_ok and BulbSheet.frame(state).region == Rect2(state * 6, 0, 6, 6)
+	_check(frames_ok and BulbSheet.frame(99).region == BulbSheet.frame(BulbSheet.STATE_COUNT - 1).region, "상태마다 6×6 칸 (범위 밖 번호는 마지막 칸)")
+	var pattern: BulbPattern = BulbPattern.new()
+	var idle_ok: bool = true
+	for i: int in 100:
+		idle_ok = idle_ok and pattern.state_of(BulbPattern.Mode.IDLE, i, 0.0) == (BulbSheet.STATE_ON if i % 2 == 0 else BulbSheet.STATE_OFF)
+	_check(idle_ok, "대기 모양: 시간 0에서 짝수 번호 켜짐 (6-B 정적 모양과 같음)")
+	_check(pattern.state_of(BulbPattern.Mode.IDLE, 0, 0.8) == BulbSheet.STATE_OFF and pattern.state_of(BulbPattern.Mode.IDLE, 1, 0.8) == BulbSheet.STATE_ON, "대기: bulb_idle_sec(0.8초)마다 짝수/홀수가 바뀜")
+	_check(pattern.state_of(BulbPattern.Mode.IDLE, 0, 1.6) == BulbSheet.STATE_ON, "대기: 두 번 바뀌면 처음 모양")
+	var spin_start: PackedInt32Array = pattern.states_of(BulbPattern.Mode.SPIN, 100, 0.0)
+	var lit: int = 0
+	for state: int in spin_start:
+		lit += 1 if state == BulbSheet.STATE_ON else 0
+	_check(lit == 34 and spin_start[0] == BulbSheet.STATE_ON and spin_start[1] == BulbSheet.STATE_OFF, "스핀 모양: 3개 중 1개씩 켜짐 (100개 중 %d개)" % lit)
+	var spin_next: PackedInt32Array = pattern.states_of(BulbPattern.Mode.SPIN, 100, 0.06)
+	_check(spin_next[0] == BulbSheet.STATE_OFF and spin_next[1] == BulbSheet.STATE_ON and spin_next[4] == BulbSheet.STATE_ON, "스핀: bulb_spin_step_sec(0.06초)마다 켜진 전구가 한 칸 앞으로")
+	_check(pattern.states_of(BulbPattern.Mode.SPIN, 100, 0.18) == spin_start, "스핀: 3칸 돌면 처음 모양")
+	var win_on: bool = true
+	var win_off: bool = true
+	for i: int in 100:
+		win_on = win_on and pattern.state_of(BulbPattern.Mode.WIN, i, 0.0) == BulbSheet.STATE_WHITE
+		win_off = win_off and pattern.state_of(BulbPattern.Mode.WIN, i, 0.12) == BulbSheet.STATE_OFF
+	_check(win_on and win_off, "당첨 모양: 전부 흰색 ↔ 전부 꺼짐 번쩍 (bulb_win_flash_sec 0.12초)")
+	_check(pattern.state_of(BulbPattern.Mode.FEVER, 5, 0.0) == BulbSheet.STATE_ON and pattern.state_of(BulbPattern.Mode.FEVER, 5, 0.2) == BulbSheet.STATE_RED, "피버 모양: 노랑 ↔ 빨강 전체 교대 (bulb_fever_sec 0.2초)")
+	var slow: FeelConfig = FeelConfig.from_dict({ "bulb_idle_sec": 2.0 })
+	var custom: BulbPattern = BulbPattern.new()
+	custom.apply_feel(slow)
+	_check(custom.state_of(BulbPattern.Mode.IDLE, 0, 1.9) == BulbSheet.STATE_ON and custom.state_of(BulbPattern.Mode.IDLE, 0, 2.0) == BulbSheet.STATE_OFF, "feel 값(bulb_idle_sec 2.0)이 모양 규칙에 반영됨")
+	var defaults: FeelConfig = FeelConfig.from_dict({})
+	_check(defaults.bulb_idle_sec == 0.8 and defaults.bulb_spin_step_sec == 0.06 and defaults.bulb_win_flash_sec == 0.12 and defaults.bulb_fever_sec == 0.2, "전구 feel 키 4개 기본값 0.8 / 0.06 / 0.12 / 0.2")
+	var bad: FeelConfig = FeelConfig.from_dict({ "bulb_idle_sec": 99.0, "bulb_spin_step_sec": 0.0 })
+	_check(bad.bulb_idle_sec == 0.8 and bad.bulb_spin_step_sec == 0.06, "전구 feel 키 범위 밖은 기본값")
+
+
+func _test_bulb_nodes() -> void:
+	var board: BoardView = BoardView.new()
+	add_child(board)
+	_check(board.bulb_count() == 100 and board.mode() == BulbPattern.Mode.IDLE and board.bulb_is_lit(0) and not board.bulb_is_lit(1), "보드 링: 처음엔 대기 모양")
+	board.set_mode(BulbPattern.Mode.SPIN)
+	_check(board.bulb_state(0) == BulbSheet.STATE_ON and board.bulb_state(1) == BulbSheet.STATE_OFF, "보드 링: 스핀 모드 시작")
+	board.advance(0.06)
+	_check(board.bulb_state(0) == BulbSheet.STATE_OFF and board.bulb_state(1) == BulbSheet.STATE_ON, "보드 링: 시간이 흐르면 켜진 전구가 돎")
+	board.set_mode(BulbPattern.Mode.IDLE)
+	_check(board.bulb_state(0) == BulbSheet.STATE_ON and board.bulb_state(1) == BulbSheet.STATE_OFF, "보드 링: 모드를 바꾸면 시간이 0부터 다시 셈")
+	board.set_mode(BulbPattern.Mode.FEVER)
+	board.advance(0.2)
+	_check(board.bulb_state(7) == BulbSheet.STATE_RED and board.bulb_is_lit(7), "보드 링: 빨강도 켜진 전구로 셈")
+	_check(board.mouse_filter == Control.MOUSE_FILTER_IGNORE, "보드 링은 클릭을 막지 않음")
+	board.free()
+	var socket_row: FrameBulbs = FrameBulbs.new()
+	add_child(socket_row)
+	var positions_ok: bool = socket_row.socket_count() == 18
+	for i: int in socket_row.socket_count():
+		positions_ok = positions_ok and socket_row.socket_art_position(i) == Vector2i(6 + i * 8, 135)
+	_check(positions_ok, "프레임 소켓 18개: x = 6, 14, … 142 / y = 135 (아트 좌표)")
+	_check(socket_row.mouse_filter == Control.MOUSE_FILTER_IGNORE and socket_row.bulb_state(0) == BulbSheet.STATE_ON and socket_row.bulb_state(1) == BulbSheet.STATE_OFF, "프레임 소켓은 클릭을 막지 않고, 처음엔 대기 모양")
+	socket_row.set_mode(BulbPattern.Mode.SPIN)
+	socket_row.advance(0.12)
+	_check(socket_row.bulb_state(2) == BulbSheet.STATE_ON and socket_row.bulb_state(0) == BulbSheet.STATE_OFF, "프레임 소켓: 스핀 모드에서 왼쪽 → 오른쪽으로 달림")
+	# frame.png에 구워진 꺼진 소켓 위치와 같은지 (생성기와 게임 좌표가 어긋나지 않게)
+	var frame_image: Image = (load("res://assets/ui/frame.png") as Texture2D).get_image()
+	var bake_ok: bool = true
+	for i: int in socket_row.socket_count():
+		var pos: Vector2i = socket_row.socket_art_position(i) * SymbolStyle.ART_SCALE
+		for offset: Vector2i in [Vector2i(0, 0), Vector2i(5, 5)]:
+			bake_ok = bake_ok and frame_image.get_pixelv(pos + offset).is_equal_approx(Color("8a7a3a"))
+		bake_ok = bake_ok and not frame_image.get_pixelv(pos + Vector2i(-3, 0)).is_equal_approx(Color("8a7a3a"))
+	_check(bake_ok, "frame.png의 꺼진 소켓 18개가 FrameBulbs 좌표와 일치")
+	socket_row.free()
+
+
+func _test_bulb_modes_in_game() -> void:
+	var win_seed: int = _sound_find_plain_win_seed()
+	var lose_seed: int = _auto_find_seed(1000, 8, false)
+	_check(win_seed > 0 and lose_seed > 0, "전구 시험용 일반 당첨·무당첨 시드를 찾음")
+	if win_seed <= 0 or lose_seed <= 0:
+		return
+	var main: Control = await _auto_main(lose_seed, 1000, 8)
+	var frame_index: int = main.get_node("Frame").get_index()
+	var bulbs: FrameBulbs = main.frame_bulbs()
+	_check(bulbs == main.get_node("FrameBulbs") and bulbs.get_index() == frame_index + 1 and main.get_node("Board").get_index() > bulbs.get_index(), "FrameBulbs는 프레임 바로 위, 보드·다른 요소보다 뒤")
+	_check(main.bulb_mode() == BulbPattern.Mode.IDLE, "처음엔 대기 모양")
+	main.do_spin()
+	_check(main.bulb_mode() == BulbPattern.Mode.SPIN and main.board_view().mode() == BulbPattern.Mode.SPIN and bulbs.mode() == BulbPattern.Mode.SPIN, "스핀이 시작되면 보드와 프레임이 스핀 모양")
+	_advance_for(main, 1.0)
+	_check(main.bulb_mode() == BulbPattern.Mode.SPIN, "릴이 도는 동안 스핀 모양 유지")
+	_settle(main)
+	_check(GameState.last_win == 0 and main.bulb_mode() == BulbPattern.Mode.IDLE, "무당첨: 릴이 멈추면 대기 모양, 당첨 번쩍 없음")
+	main.free()
+	await get_tree().process_frame
+	# 일반 당첨: 당첨선이 깜빡이는 동안(1.5초) 번쩍
+	var win_main: Control = await _auto_main(win_seed, 1000, 8)
+	win_main.do_spin()
+	_settle(win_main)
+	var blink: float = LineOverlay.blink_total_sec()
+	_check(_near(blink, 1.5), "당첨선 깜빡임 시간 1.5초 (3사이클)")
+	_check(GameState.last_win > 0 and win_main.bulb_mode() == BulbPattern.Mode.WIN and win_main.frame_bulbs().mode() == BulbPattern.Mode.WIN, "일반 당첨: 정산 때 전구가 당첨 모양")
+	_advance_for(win_main, blink - 0.2)
+	_check(win_main.bulb_mode() == BulbPattern.Mode.WIN, "당첨 모양은 깜빡임이 끝나기 전까지 유지")
+	_advance_for(win_main, 0.4)
+	_check(win_main.bulb_mode() == BulbPattern.Mode.IDLE, "깜빡임이 끝나면 대기 모양으로 돌아감")
+	# 당첨 모양 도중 다음 판이 시작되면 스핀 모양이 우선
+	win_main.free()
+	await get_tree().process_frame
+	win_main = await _auto_main(win_seed, 1000, 8)
+	win_main.do_spin()
+	_settle(win_main)
+	win_main.advance(0.3)
+	GameState.credit = 1000
+	win_main.do_spin()
+	_advance_for(win_main, 2.0)
+	_check(win_main.bulb_mode() == BulbPattern.Mode.SPIN, "당첨 모양 도중 다음 판을 시작하면 스핀 모양이 우선 (남은 시간이 스핀을 끊지 않음)")
+	win_main.free()
+	await get_tree().process_frame
+	# 피버: 오버레이가 보드를 가리는 동안은 대기 모양, 끝난 직후 피버 모양(1.5초)
+	var data: BalanceData = _fever_test_data()
+	var fever_n: int = _find_fever_spin(data, 1)
+	var fever_main: Control = await _fever_world(data, fever_n)
+	fever_main.do_spin()
+	_check(_advance_to_fever(fever_main) and fever_main.bulb_mode() == BulbPattern.Mode.IDLE, "피버 연출 중에는 전구 모양이 따로 바뀌지 않음 (오버레이가 가림)")
+	_settle(fever_main)
+	_check(fever_main.bulb_mode() == BulbPattern.Mode.FEVER and fever_main.frame_bulbs().mode() == BulbPattern.Mode.FEVER, "피버 연출이 끝난 직후 전구가 피버 모양")
+	_advance_for(fever_main, blink + 0.2)
+	_check(fever_main.bulb_mode() == BulbPattern.Mode.IDLE, "피버 모양은 1.5초 뒤 대기 모양으로")
+	fever_main.free()
+	await get_tree().process_frame
+	# 건너뛰어도 피버 모양
+	var skip_main: Control = await _fever_world(data, fever_n)
+	skip_main.do_spin()
+	_advance_to_fever(skip_main)
+	skip_main.advance(0.6)
+	skip_main.do_spin()
+	_check(skip_main.bulb_mode() == BulbPattern.Mode.FEVER, "연출을 건너뛰어도 끝난 직후 피버 모양")
+	skip_main.free()
+	await get_tree().process_frame
+
+
 ## 6-F2: BGM (곡 파일·길이, 시작, 메인↔피버 전환 곡선, 메인 위치 기억, 곡 끝 반복, 피버 연출과의 연결, feel 키)
 func _test_bgm() -> void:
 	await _test_bgm_basics()
@@ -230,8 +381,10 @@ func _test_bgm_basics() -> void:
 	_settle(main)
 	_check(_bgm_log(bgm) == "" or not _bgm_log(bgm).contains("fever"), "피버 없는 일반 판은 BGM을 바꾸지 않음")
 	# feel 키
-	var feel: FeelConfig = FeelConfig.load_from_file()
-	_check(feel.bgm_volume_db == -12.0 and feel.bgm_to_fever_sec == 0.3 and feel.bgm_to_main_sec == 1.0 and feel.bgm_loop_trim_sec == 2.0 and feel.bgm_loop_fade_sec == 1.0, "feel.json 새 키 5개: -12 / 0.3 / 1.0 / 2.0 / 1.0")
+	# 사용자가 feel.json을 듣고 조정하므로(예: bgm_volume_db) 파일 값이 아니라 "기본값"과 "파일이 오류 없이 읽힘"을 확인한다
+	var feel: FeelConfig = FeelConfig.from_dict({})
+	_check(feel.bgm_volume_db == -12.0 and feel.bgm_to_fever_sec == 0.3 and feel.bgm_to_main_sec == 1.0 and feel.bgm_loop_trim_sec == 2.0 and feel.bgm_loop_fade_sec == 1.0, "BGM 키 5개 기본값: -12 / 0.3 / 1.0 / 2.0 / 1.0")
+	_check(FeelConfig.load_from_file().errors.is_empty(), "feel.json이 오류 없이 읽힘 (모든 키가 범위 안)")
 	var bad: FeelConfig = FeelConfig.from_dict({ "bgm_loop_trim_sec": 1.0, "bgm_loop_fade_sec": 2.0 })
 	_check(bad.bgm_loop_trim_sec == 2.0 and bad.bgm_loop_fade_sec == 1.0, "반복 크로스페이드가 trim보다 길면 둘 다 기본값")
 	_check(FeelConfig.from_dict({ "bgm_volume_db": 50.0 }).bgm_volume_db == -12.0 and FeelConfig.from_dict({ "bgm_to_main_sec": 9.0 }).bgm_to_main_sec == 1.0, "BGM 키 범위 밖은 기본값")
@@ -443,8 +596,8 @@ func _test_sound_basics() -> void:
 	bank.stop_loop(SoundBank.NAME_REEL_SPIN)
 	_check(_sound_log(bank) == "reel_spin,reel_spin:stop" and not bank.is_loop_on(SoundBank.NAME_REEL_SPIN), "반복음을 두 번 꺼도 한 번만 정지")
 	# feel 키: 기본값·범위·중 < 대
-	var feel: FeelConfig = FeelConfig.load_from_file()
-	_check(feel.win_mid_ratio == 2.0 and feel.win_big_ratio == 10.0 and feel.sfx_volume_db == 0.0, "feel.json 새 키: win_mid_ratio 2 / win_big_ratio 10 / sfx_volume_db 0")
+	var feel: FeelConfig = FeelConfig.from_dict({})
+	_check(feel.win_mid_ratio == 2.0 and feel.win_big_ratio == 10.0 and feel.sfx_volume_db == 0.0, "효과음 키 기본값: win_mid_ratio 2 / win_big_ratio 10 / sfx_volume_db 0")
 	var swapped: FeelConfig = FeelConfig.from_dict({ "win_mid_ratio": 5.0, "win_big_ratio": 3.0 })
 	_check(swapped.win_mid_ratio == 2.0 and swapped.win_big_ratio == 10.0, "중 기준이 대 기준 이상이면 둘 다 기본값")
 	_check(FeelConfig.from_dict({ "sfx_volume_db": 99.0 }).sfx_volume_db == 0.0 and FeelConfig.from_dict({ "sfx_volume_db": -60.0 }).sfx_volume_db == 0.0, "sfx_volume_db 범위(-40~6) 밖은 기본값")
