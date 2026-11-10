@@ -32,6 +32,8 @@ func _ready() -> void:
 	var main: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	add_child(main)
 	main.set_process(false)
+	# 이 씬은 연출 화면만 본다: 메인이 시작한 BGM은 끈다 (BGM은 bgm_preview.tscn에서 확인)
+	(main.bgm_player() as BgmPlayer).stop_all()
 	_all_steps = _make_steps()
 	_overlay = FeverOverlay.new()
 	add_child(_overlay)

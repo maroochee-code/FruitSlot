@@ -45,7 +45,7 @@ const BYTES_PER_SAMPLE: int = 2
 
 ## false면 요청만 기록하고 실제로는 재생하지 않는다. 헤드리스(화면·소리 장치 없음) 실행에서는 기본으로 꺼 둔다
 ## (더미 오디오에서 재생한 소리를 바로 정리하면 종료 때 "resources still in use" 경고가 남기 때문).
-var playback_enabled: bool = DisplayServer.get_name() != "headless"
+var playback_enabled: bool = default_playback_enabled()
 
 var _streams: Dictionary[StringName, AudioStream] = {}
 var _voices: Array[AudioStreamPlayer] = []
@@ -75,6 +75,11 @@ func _init() -> void:
 		add_child(player)
 		_loops[loop_name] = player
 		_loop_on[loop_name] = false
+
+
+## 실제 재생을 켤지의 기본값: 헤드리스가 아니면 켠다 (BgmPlayer도 같은 기준을 쓴다)
+static func default_playback_enabled() -> bool:
+	return DisplayServer.get_name() != "headless"
 
 
 ## SFX / BGM 버스가 없으면 만든다 (둘 다 Master로 보냄). 8단계 설정 화면이 이 버스의 볼륨을 조절한다.

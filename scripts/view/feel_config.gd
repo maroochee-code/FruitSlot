@@ -27,6 +27,11 @@ const SPECS: Dictionary = {
 	"win_mid_ratio": [2.0, 0.1, 1000.0],
 	"win_big_ratio": [10.0, 0.1, 1000.0],
 	"sfx_volume_db": [0.0, -40.0, 6.0],
+	"bgm_volume_db": [-12.0, -40.0, 6.0],
+	"bgm_to_fever_sec": [0.3, 0.0, 5.0],
+	"bgm_to_main_sec": [1.0, 0.0, 5.0],
+	"bgm_loop_trim_sec": [2.0, 0.0, 10.0],
+	"bgm_loop_fade_sec": [1.0, 0.0, 5.0],
 }
 ## 릴 수만큼 값이 들어가는 항목. 키: [기본값 목록, 최솟값, 최댓값]
 const REEL_COUNT: int = 3
@@ -82,6 +87,16 @@ var win_mid_ratio: float = 2.0
 var win_big_ratio: float = 10.0
 ## 효과음(SFX 버스) 볼륨 (dB, 0 = 원래 크기). 다음 스핀부터 적용
 var sfx_volume_db: float = 0.0
+## BGM(BGM 버스) 볼륨 (dB). 두 곡 모두 음량이 커서 기본 -12. 다음 스핀부터 적용
+var bgm_volume_db: float = -12.0
+## 메인 → 피버 BGM으로 바뀌는 시간 (초). 피버 곡의 도입부가 부드러워서 짧게
+var bgm_to_fever_sec: float = 0.3
+## 피버 → 메인 BGM으로 돌아오는 시간 (초). 시작 때 메인 BGM이 페이드인하는 시간도 이 값
+var bgm_to_main_sec: float = 1.0
+## BGM 반복: 곡 끝에서 이만큼 남았을 때 같은 곡을 처음부터 다시 튼다 (초). 곡 끝의 페이드아웃·무음을 건너뛴다
+var bgm_loop_trim_sec: float = 2.0
+## BGM 반복 때 이전 소리를 줄이며 새 소리를 키우는 시간 (초). bgm_loop_trim_sec보다 클 수 없다.
+var bgm_loop_fade_sec: float = 1.0
 ## 파일에서 읽다가 문제가 있어 기본값으로 대체한 항목 설명
 var errors: PackedStringArray = PackedStringArray()
 ## 파일을 읽고 JSON으로 해석하는 데 성공했는지 (항목별 범위 문제와는 별개)
@@ -129,6 +144,7 @@ func _read(raw: Dictionary) -> void:
 	_check_delay_before_auto_stop()
 	_check_pool_tiers()
 	_check_win_tiers()
+	_check_bgm_loop()
 
 
 ## 릴 수만큼의 숫자 목록을 읽는다. 개수가 다르거나 하나라도 범위 밖이면 목록 전체를 기본값으로 쓴다.
@@ -178,6 +194,15 @@ func _check_win_tiers() -> void:
 	errors.append("win_mid_ratio(%s)가 win_big_ratio(%s)보다 작아야 해서 둘 다 기본값 사용" % [win_mid_ratio, win_big_ratio])
 	win_mid_ratio = SPECS["win_mid_ratio"][0]
 	win_big_ratio = SPECS["win_big_ratio"][0]
+
+
+## 반복 크로스페이드가 곡 끝에 남은 길이(trim)보다 길면 이전 소리가 모자라므로 둘 다 기본값으로 돌린다.
+func _check_bgm_loop() -> void:
+	if bgm_loop_fade_sec <= bgm_loop_trim_sec:
+		return
+	errors.append("bgm_loop_fade_sec(%s)가 bgm_loop_trim_sec(%s)보다 클 수 없어서 둘 다 기본값 사용" % [bgm_loop_fade_sec, bgm_loop_trim_sec])
+	bgm_loop_trim_sec = SPECS["bgm_loop_trim_sec"][0]
+	bgm_loop_fade_sec = SPECS["bgm_loop_fade_sec"][0]
 
 
 func _longest_delay() -> float:

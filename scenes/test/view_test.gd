@@ -60,6 +60,7 @@ func _ready() -> void:
 	await _test_fever_show()
 	await _test_overlay_art()
 	await _test_sound()
+	await _test_bgm()
 	await _test_auto_view()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
@@ -177,6 +178,190 @@ func _test_board_layout(main: Control) -> void:
 		if left or right:
 			labels_ok = labels_ok and label.position.y >= 48.0 and label.position.y + 21.0 <= 300.0
 	_check(label_count > 0 and labels_ok, "라인 라벨 33×21, 보드 바깥 (왼쪽 x=6 / 오른쪽 x=396 / 위쪽 y=9)")
+
+
+## 6-F2: BGM (곡 파일·길이, 시작, 메인↔피버 전환 곡선, 메인 위치 기억, 곡 끝 반복, 피버 연출과의 연결, feel 키)
+func _test_bgm() -> void:
+	await _test_bgm_basics()
+	_test_bgm_crossfade()
+	_test_bgm_loop()
+	await _test_bgm_with_main()
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+
+
+func _bgm_log(bgm: BgmPlayer) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for entry: StringName in bgm.requests():
+		parts.append(String(entry))
+	return ",".join(parts)
+
+
+func _near(a: float, b: float, tolerance: float = 0.002) -> bool:
+	return absf(a - b) <= tolerance
+
+
+## 시험용 BgmPlayer (기본 feel 값, 소리 재생은 헤드리스라 요청만)
+func _make_bgm() -> BgmPlayer:
+	var bgm: BgmPlayer = BgmPlayer.new()
+	add_child(bgm)
+	bgm.apply_feel(FeelConfig.from_dict({}))
+	return bgm
+
+
+func _test_bgm_basics() -> void:
+	var main: Control = await _auto_main(5, 1000, 8)
+	var bgm: BgmPlayer = main.bgm_player()
+	_check(bgm != null and main.get_node("BgmPlayer") == bgm, "main 안에 BgmPlayer 노드")
+	var files_ok: bool = true
+	for track: StringName in BgmPlayer.TRACK_PATHS:
+		files_ok = files_ok and ResourceLoader.exists(BgmPlayer.TRACK_PATHS[track]) and load(BgmPlayer.TRACK_PATHS[track]) is AudioStreamMP3
+	_check(files_ok and bgm.track_length(BgmPlayer.TRACK_MAIN) > 60.0 and bgm.track_length(BgmPlayer.TRACK_FEVER) > 60.0, "BGM 파일 2개(main %.1f초 / fever %.1f초)가 mp3로 읽힘" % [bgm.track_length(BgmPlayer.TRACK_MAIN), bgm.track_length(BgmPlayer.TRACK_FEVER)])
+	_check(DisplayServer.get_name() != "headless" or not bgm.playback_enabled, "헤드리스에서는 실제 재생 없이 요청·상태만 셈")
+	_check(bgm.current_track() == BgmPlayer.TRACK_MAIN and _bgm_log(bgm) == "start:main", "게임이 시작되면 메인 BGM 시작 (%s)" % _bgm_log(bgm))
+	_check(bgm.gain_of(BgmPlayer.TRACK_MAIN) == 0.0, "시작은 무음에서 페이드인")
+	main.advance(1.0)
+	_check(_near(bgm.gain_of(BgmPlayer.TRACK_MAIN), 1.0) and bgm.position_of(BgmPlayer.TRACK_MAIN) > 0.9, "1초(bgm_to_main_sec) 뒤 메인 BGM 풀 음량, 위치가 흐름")
+	bgm.start()
+	_check(_bgm_log(bgm) == "start:main", "start()를 또 불러도 다시 시작하지 않음")
+	# 일반 스핀은 BGM을 건드리지 않음
+	bgm.clear_requests()
+	main.press_bet()
+	main.do_spin()
+	_settle(main)
+	_check(_bgm_log(bgm) == "" or not _bgm_log(bgm).contains("fever"), "피버 없는 일반 판은 BGM을 바꾸지 않음")
+	# feel 키
+	var feel: FeelConfig = FeelConfig.load_from_file()
+	_check(feel.bgm_volume_db == -12.0 and feel.bgm_to_fever_sec == 0.3 and feel.bgm_to_main_sec == 1.0 and feel.bgm_loop_trim_sec == 2.0 and feel.bgm_loop_fade_sec == 1.0, "feel.json 새 키 5개: -12 / 0.3 / 1.0 / 2.0 / 1.0")
+	var bad: FeelConfig = FeelConfig.from_dict({ "bgm_loop_trim_sec": 1.0, "bgm_loop_fade_sec": 2.0 })
+	_check(bad.bgm_loop_trim_sec == 2.0 and bad.bgm_loop_fade_sec == 1.0, "반복 크로스페이드가 trim보다 길면 둘 다 기본값")
+	_check(FeelConfig.from_dict({ "bgm_volume_db": 50.0 }).bgm_volume_db == -12.0 and FeelConfig.from_dict({ "bgm_to_main_sec": 9.0 }).bgm_to_main_sec == 1.0, "BGM 키 범위 밖은 기본값")
+	# 볼륨은 스핀 시작 때 새 설정으로 BGM 버스에 적용
+	main.set_feel_path(FEEL_TEMP_PATH)
+	_write_feel_file(FEEL_TEMP_PATH, { "bgm_volume_db": -20.0 })
+	main.reload_feel()
+	GameState.credit = 1000
+	main.press_bet()
+	main.do_spin()
+	_check(_near(AudioServer.get_bus_volume_db(AudioServer.get_bus_index(SoundBank.BUS_BGM)), -20.0, 0.01), "bgm_volume_db가 BGM 버스에 적용됨 (다음 스핀부터)")
+	_settle(main)
+	_write_feel_file(FEEL_TEMP_PATH, {})
+	main.reload_feel()
+	main.set_feel_path(FeelConfig.DEFAULT_PATH)
+	AudioServer.set_bus_volume_db(AudioServer.get_bus_index(SoundBank.BUS_BGM), 0.0)
+	# 끄기 / 다시 시작
+	bgm.stop_all()
+	_check(bgm.current_track() == &"" and bgm.active_voices() == 0, "stop_all(): 모두 꺼짐 (미리보기 씬용)")
+	bgm.start()
+	_check(bgm.current_track() == BgmPlayer.TRACK_MAIN and bgm.active_voices() == 1, "stop_all() 뒤 start(): 다시 시작")
+	bgm.seek(100.0)
+	_check(_near(bgm.position_of(BgmPlayer.TRACK_MAIN), 100.0), "seek(): 위치 이동 (미리보기용)")
+	main.free()
+	await get_tree().process_frame
+
+
+## 메인 → 피버 → 메인: 등전력 곡선, 메인은 일시정지로 위치 기억, 피버는 매번 처음부터
+func _test_bgm_crossfade() -> void:
+	var bgm: BgmPlayer = _make_bgm()
+	bgm.start()
+	bgm.advance(1.0)
+	var main_track: StringName = BgmPlayer.TRACK_MAIN
+	var fever_track: StringName = BgmPlayer.TRACK_FEVER
+	bgm.switch_to(fever_track)
+	bgm.switch_to(fever_track)
+	_check(_bgm_log(bgm) == "start:main,to:fever", "같은 곡으로 또 바꿔도 요청은 한 번")
+	bgm.advance(0.15)
+	_check(_near(bgm.gain_of(main_track), cos(PI / 4.0)) and _near(bgm.gain_of(fever_track), sin(PI / 4.0)), "전환 중간(0.15/0.3초): 등전력 곡선 (메인 %.3f / 피버 %.3f)" % [bgm.gain_of(main_track), bgm.gain_of(fever_track)])
+	bgm.advance(0.15)
+	_check(bgm.gain_of(main_track) == 0.0 and _near(bgm.gain_of(fever_track), 1.0) and bgm.is_paused(main_track), "전환이 끝나면 메인은 일시정지(무음), 피버는 풀 음량")
+	var paused_at: float = bgm.position_of(main_track)
+	bgm.advance(5.0)
+	_check(_near(bgm.position_of(main_track), paused_at) and _near(bgm.position_of(fever_track), 5.3), "일시정지 중 메인 위치는 그대로(%.2f초), 피버는 처음부터 흐름" % paused_at)
+	bgm.switch_to(main_track)
+	_check(_bgm_log(bgm) == "start:main,to:fever,to:main" and not bgm.is_paused(main_track), "피버 → 메인: 메인 이어서 재생")
+	bgm.advance(0.5)
+	_check(_near(bgm.gain_of(main_track), sin(PI / 4.0)) and _near(bgm.gain_of(fever_track), cos(PI / 4.0)), "복귀 중간(0.5/1.0초): 등전력 곡선")
+	bgm.advance(0.5)
+	_check(_near(bgm.gain_of(main_track), 1.0) and bgm.gain_of(fever_track) == 0.0 and bgm.active_voices() == 1, "복귀가 끝나면 메인만 남음 (피버 재생기 정리)")
+	_check(_near(bgm.position_of(main_track), paused_at + 1.0), "메인은 멈춘 자리(%.2f초)부터 이어짐 → %.2f초" % [paused_at, bgm.position_of(main_track)])
+	bgm.switch_to(fever_track)
+	_check(bgm.position_of(fever_track) == 0.0, "피버 곡은 매번 처음부터")
+	# 전환 도중 다시 전환해도 음량이 튀지 않음
+	bgm.advance(0.1)
+	var before: float = bgm.gain_of(main_track)
+	bgm.switch_to(main_track)
+	_check(_near(bgm.gain_of(main_track), before), "전환 도중 되돌려도 음량이 끊기지 않고 이어짐")
+	bgm.advance(2.0)
+	_check(bgm.current_track() == main_track and _near(bgm.gain_of(main_track), 1.0) and bgm.active_voices() == 1, "연속 전환 뒤에도 메인만 정상으로 남음")
+	bgm.free()
+
+
+## 곡 끝 반복: 길이 - trim 시각에 한 번, 크로스페이드, 이음새 없이 계속
+func _test_bgm_loop() -> void:
+	var bgm: BgmPlayer = _make_bgm()
+	bgm.start()
+	var main_track: StringName = BgmPlayer.TRACK_MAIN
+	var length: float = bgm.track_length(main_track)
+	_check(_near(BgmPlayer.loop_point(length, 2.0), length - 2.0) and BgmPlayer.loop_point(1.0, 5.0) == 0.0, "반복 시각 = 곡 길이 - trim (음수면 0)")
+	bgm.advance(1.0)
+	var point: float = BgmPlayer.loop_point(length, 2.0)
+	var guard: float = 1.0
+	while guard + 1.0 < point:
+		bgm.advance(1.0)
+		guard += 1.0
+	_check(_bgm_log(bgm) == "start:main", "반복 시각 전에는 반복 요청이 없음 (위치 %.1f초 / 시각 %.1f초)" % [guard, point])
+	bgm.advance(1.0)
+	_check(_bgm_log(bgm) == "start:main,loop:main" and bgm.active_voices() == 2, "반복 시각이 되면 같은 곡을 다시 틀고 이전 소리는 줄이는 중 (재생기 2개)")
+	bgm.advance(0.5)
+	_check(bgm.gain_of(main_track) > 0.2 and bgm.gain_of(main_track) < 0.95 and bgm.position_of(main_track) < 3.0, "새 소리는 처음부터 커지는 중")
+	bgm.advance(1.0)
+	_check(bgm.active_voices() == 1 and _near(bgm.gain_of(main_track), 1.0), "크로스페이드가 끝나면 이전 재생기 정리, 새 소리 풀 음량")
+	for i: int in 30:
+		bgm.advance(1.0)
+	_check(_bgm_log(bgm) == "start:main,loop:main", "한 번 반복한 뒤 곧바로 또 반복하지 않음")
+	for i: int in int(length - 2.0):
+		bgm.advance(1.0)
+	_check(_bgm_log(bgm) == "start:main,loop:main,loop:main", "다음 곡 끝에서 또 반복 (계속 이어짐)")
+	# 피버로 일시정지 중에는 반복하지 않음
+	bgm.switch_to(BgmPlayer.TRACK_FEVER)
+	bgm.advance(1.0)
+	var loops_before: int = bgm.requests().count(&"loop:main")
+	bgm.advance(60.0)
+	_check(bgm.requests().count(&"loop:main") == loops_before and not bgm.requests().has(&"loop:fever"), "일시정지 중인 메인은 반복을 시작하지 않음 (피버 곡도 60초 안에는 반복 없음)")
+	bgm.free()
+
+
+## 피버 연출과의 연결: 연출이 시작되면 피버 곡, 끝나면(건너뛰기 포함) 메인 곡, 한 쌍만
+func _test_bgm_with_main() -> void:
+	var data: BalanceData = _fever_test_data()
+	var multi_n: int = _find_fever_spin(data, 2)
+	var pool_n: int = _find_pool_spin(data)
+	_check(multi_n >= 0 and pool_n >= 0, "BGM 시험용 피버 2개 스핀·풀 획득 스핀을 찾음")
+	if multi_n < 0 or pool_n < 0:
+		return
+	for n: int in [multi_n, pool_n]:
+		var main: Control = await _fever_world(data, n)
+		var bgm: BgmPlayer = main.bgm_player()
+		main.do_spin()
+		_check(_advance_to_fever(main) and bgm.current_track() == BgmPlayer.TRACK_FEVER, "피버 연출이 시작되면 피버 곡으로 전환")
+		_settle(main)
+		var tag: String = "풀 획득 스핀" if n == pool_n else "피버 2개 스핀"
+		_check(_bgm_log(bgm) == "start:main,to:fever,to:main" and bgm.current_track() == BgmPlayer.TRACK_MAIN, "%s: 연출 내내 피버 곡 → 끝나면 메인 곡, 전환은 한 쌍만 (%s)" % [tag, _bgm_log(bgm)])
+		main.free()
+		await get_tree().process_frame
+	# 건너뛰기
+	var skip_main: Control = await _fever_world(data, multi_n)
+	var skip_bgm: BgmPlayer = skip_main.bgm_player()
+	skip_main.do_spin()
+	_check(_advance_to_fever(skip_main), "BGM 건너뛰기 시험: 피버 연출 시작")
+	skip_main.advance(0.6)
+	var main_pos: float = skip_bgm.position_of(BgmPlayer.TRACK_MAIN)
+	skip_main.do_spin()
+	_check(not skip_main.fever_playing() and skip_bgm.current_track() == BgmPlayer.TRACK_MAIN, "건너뛰면 메인 곡으로 복귀")
+	_check(_bgm_log(skip_bgm) == "start:main,to:fever,to:main", "건너뛰어도 전환은 한 쌍만 (%s)" % _bgm_log(skip_bgm))
+	skip_main.advance(2.0)
+	_check(_near(skip_bgm.gain_of(BgmPlayer.TRACK_MAIN), 1.0) and skip_bgm.position_of(BgmPlayer.TRACK_MAIN) > main_pos and skip_bgm.active_voices() == 1, "복귀 뒤 메인은 멈춘 자리 이후로 이어지고 피버 재생기는 정리됨")
+	skip_main.free()
+	await get_tree().process_frame
 
 
 ## 6-F1: 효과음 요청 (소리 자체가 아니라 "맞는 상황에 맞는 이름이 요청됐는지"를 SoundBank의 요청 기록으로 확인한다)

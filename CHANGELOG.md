@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 0.14.0 — 2026-11-10 (6-F2: BGM)
+
+### 추가
+- `BgmPlayer`(`scripts/view/bgm_player.gd`): 메인 BGM(`bgm_main.mp3`)을 게임 시작 때 1초 페이드인으로 시작해 반복 재생. 피버 연출이 시작되면 피버 BGM(`bgm_fever.mp3`)으로 0.3초 전환, 끝나면(건너뛰기 포함) 1초 크로스페이드로 메인으로 복귀
+- 메인은 피버 중 일시정지(위치 기억)하고 복귀 때 멈춘 자리부터 이어서, 피버 곡은 매번 처음부터. 풀 획득 단계에서도 피버 BGM 유지(덕킹 없음)
+- 곡 끝 반복은 mp3 임포트 옵션이 아니라 코드 크로스페이드: 곡 끝 2초 전에 같은 곡을 처음부터 다시 틀고 이전 소리를 1초에 걸쳐 줄임 (곡 끝의 약 1초 무음·페이드아웃을 건너뜀). 등전력(equal-power) 곡선
+- `feel.json` 새 키 5개: `bgm_volume_db`(-12.0), `bgm_to_fever_sec`(0.3), `bgm_to_main_sec`(1.0), `bgm_loop_trim_sec`(2.0), `bgm_loop_fade_sec`(1.0, trim보다 크면 둘 다 기본값). 설명은 `docs/feel.md`
+- `scenes/test/bgm_preview.tscn`: M 메인 / F 피버 / J 반복 지점 앞으로 이동(이음새 듣기) / S 끄기·켜기 / -,= 볼륨
+- `docs/credits.md`에 BGM 출처(Suno, 곡 ID)와 "배포 전 상업적 이용 가능 여부 확인 필요" 기록
+- view_test +43: BGM 파일·노드, 시작·페이드인, 전환 곡선, 메인 위치 기억, 곡 끝 반복, 피버 연출·건너뛰기·풀 연결, feel 키 검증, 볼륨 적용
+
+### 변경
+- `overlay_preview.tscn`은 메인이 시작한 BGM을 꺼 둠 (BGM은 bgm_preview에서 확인)
+- `SoundBank.default_playback_enabled()` 추가(헤드리스면 실제 재생 끔, SoundBank·BgmPlayer 공통)
+- 로직, GameState, balance.json, project.godot, mp3 임포트 설정 변경 없음
+
 ## 0.13.0 — 2026-11-10 (6-F1: 효과음)
 
 ### 추가

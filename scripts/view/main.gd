@@ -113,6 +113,8 @@ var _start_button: Button
 var _auto_button: Button
 ## 효과음 (6-F1). 소리는 이미 정해진 결과를 알려 주기만 한다.
 var _sound: SoundBank
+## BGM (6-F2). 피버 연출이 시작되면 피버 곡, 끝나면 메인 곡 (건너뛰어도 한 쌍)
+var _bgm: BgmPlayer
 ## 피버 연출을 건너뛰는 중인지 (건너뛸 때 한꺼번에 나가는 단계 시작 알림에는 소리를 내지 않는다)
 var _skipping_fever: bool = false
 ## 소리를 낼 때 쓰는 "AUTO가 켜져 있던가" (판마다 오는 auto_changed에는 소리를 내지 않는다)
@@ -191,6 +193,7 @@ func _announce_feel(message: String) -> void:
 
 ## 시간을 delta초 진행한다. 릴 움직임, 자동 정지, 정산 대기를 처리한다. (테스트는 이걸 직접 부른다.)
 func advance(delta: float) -> void:
+	_bgm.advance(delta)
 	_advance_blink(delta)
 	if _spin.is_active():
 		_spin.advance(delta)
@@ -261,6 +264,11 @@ func press_cancel() -> bool:
 ## 효과음 도우미 (테스트용)
 func sound_bank() -> SoundBank:
 	return _sound
+
+
+## BGM 재생기 (테스트·미리보기용)
+func bgm_player() -> BgmPlayer:
+	return _bgm
 
 
 ## START. 멈춰 있으면 크레딧 차감 + 결과 확정(GameState), 릴이 돌고 있으면 남은 릴을 차례로 정지시킨다.
@@ -438,6 +446,7 @@ func _on_spin_started(result: SpinResult) -> void:
 	# 새 손맛 설정은 여기서만 받아들인다. 이 스핀은 끝까지 이 설정 한 벌로 움직인다.
 	_feel = _latest_feel
 	_sound.set_sfx_volume_db(_feel.sfx_volume_db)
+	_bgm.apply_feel(_feel)
 	_sound.play(SoundBank.NAME_START)
 	GameState.auto_gap_sec = _feel.auto_spin_gap_sec
 	_spin.begin(result.stops, _feel)
@@ -491,6 +500,7 @@ func _start_fever_show() -> void:
 	_fever_panel.set_counts(_fever_counts_shown)
 	_notice_override = ""
 	# 이번 스핀이 쓰는 설정(_feel)으로 재생 → 연출 도중 feel.json을 바꿔도 이번 연출은 그대로
+	_bgm.switch_to(BgmPlayer.TRACK_FEVER)
 	_fever_overlay.play(_fever_steps, _feel.fever_overlay_sec, _feel.fever_step_gap, _feel.fever_skip_lock_sec, _feel.pool_overlay_sec)
 	_refresh_buttons()
 	_refresh_notice()
@@ -519,6 +529,7 @@ func _on_fever_step_started(index: int) -> void:
 
 
 func _on_fever_finished(skipped: bool) -> void:
+	_bgm.switch_to(BgmPlayer.TRACK_MAIN)
 	# 건너뛰면 재생 중인 연출 소리를 끊고 마무리음도 없다. 끝까지 봤을 때만 마무리음.
 	if skipped:
 		_sound.cut_oneshots()
@@ -768,6 +779,10 @@ func _build_sound() -> void:
 	_sound = SoundBank.new()
 	add_child(_sound)
 	_sound.set_sfx_volume_db(_feel.sfx_volume_db)
+	_bgm = BgmPlayer.new()
+	add_child(_bgm)
+	_bgm.apply_feel(_feel)
+	_bgm.start()
 
 
 func _build_debug() -> void:

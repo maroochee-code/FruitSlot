@@ -21,5 +21,10 @@
 	"pool_red_from": 1500,
 	"win_mid_ratio": 2.0,
 	"win_big_ratio": 10.0,
-	"sfx_volume_db": 0.0
+	"sfx_volume_db": 0.0,
+	"bgm_volume_db": -5.0,
+	"bgm_to_fever_sec": 0.3,
+	"bgm_to_main_sec": 1.0,
+	"bgm_loop_trim_sec": 2.0,
+	"bgm_loop_fade_sec": 1.0
 }

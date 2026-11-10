@@ -48,7 +48,7 @@
 ---
 
 # 6-F 작업 계획 — 소리·BGM·전구·당첨 정산 연출 (세 번에 나눠 진행)
-- **6-F1 효과음** (구현 완료, F5 확인 대기): 합성 효과음 14개, SoundBank, 상황별 연결, feel 키 3개(`win_mid_ratio`, `win_big_ratio`, `sfx_volume_db`), 미리보기 씬
-- **6-F2 BGM**: bgm_main/bgm_fever 연결, 피버 때 전환 (BGM 반복은 임포트 옵션 변경이라 승인 필요, `bgm_volume_db` 키는 그때 승인)
+- **6-F1 효과음** (구현·커밋 완료 v0.13.0): 합성 효과음 14개, SoundBank, 상황별 연결, feel 키 3개(`win_mid_ratio`, `win_big_ratio`, `sfx_volume_db`), 미리보기 씬
+- **6-F2 BGM** (구현 완료 v0.14.0, F5 확인 대기): bgm_main/bgm_fever 연결, 피버 때 전환·복귀(메인은 멈춘 자리부터), 코드 크로스페이드 반복, feel 키 5개, `bgm_preview.tscn`
 - **6-F3 전구 애니메이션, 당첨 정산 연출(WIN 카운트업·동전·크레딧), AUTO 대기 정리**
 - 결정(6-F1): 거절=cancel, AUTO 켜기·끄기=button, 피버·풀 연출 중 win_x 생략, fever_end는 자연 종료 때만, 오디오 버스는 코드 생성, BET/MAX/CANCEL은 main 래퍼로 소리 연결
