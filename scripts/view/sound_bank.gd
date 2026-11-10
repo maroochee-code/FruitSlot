@@ -18,7 +18,7 @@ const LOG_MAX: int = 256
 const LOOP_SUFFIX_STOP: String = ":stop"
 const CUT_MARK: StringName = &"cut"
 
-## 연결하는 효과음 이름 (파일 이름과 같음). gameover는 7단계에서 연결한다.
+## 연결하는 효과음 이름 (파일 이름과 같음). gameover는 GAME OVER 화면이 뜰 때 재생한다 (7-B).
 const NAME_COIN: StringName = &"coin"
 const NAME_BET: StringName = &"bet"
 const NAME_CANCEL: StringName = &"cancel"

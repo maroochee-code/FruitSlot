@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## 0.18.0 — 2026-11-11 (7-B: GAME OVER)
+
+### 추가
+- GAME OVER 화면 `GameOverOverlay`(`scripts/view/game_over_overlay.gd`): 정산 순간 로직 크레딧이 0이면 연출이 모두 끝난 뒤 `gameover_delay_sec` 뒤에 뜸. 640×414만 덮고 배너·POOL·피버 카운터·CONTINUE/NEW GAME 버튼·남은 이어하기 횟수·조작 안내. ←/→·스페이스/엔터·마우스, 뜬 직후 입력 잠금
+- **GAME OVER 동안 모든 입력 무효**(C·B·M·X·A·1~3 키와 COIN·BET·MAX BET·CANCEL·START·AUTO·STOP 버튼). 오버레이 키와 개발용 F1·F6만 통과
+- CONTINUE: `continue_credit` 지급, 판당 `continue_max`번, POOL·피버 카운터 유지, 베팅은 직전 값으로 복구. NEW GAME: 시작 크레딧 지급 + POOL·피버 카운터·이어하기 횟수·판 기록 초기화 + 베팅·WIN 0·AUTO 끔. 둘 다 받아들여지면 `button.wav`
+- `GameState`: `grant_credit(amount, reason)`(크레딧이 올라가는 유일한 입구: `start` / `continue` / `test_coin`), `continue_game()`, `new_game()`(7-C 시작 화면 START도 이 함수를 씀), `is_game_over()`, `can_continue()`, `coin_allowed()`, 시그널 `game_over` / `credit_granted` / `new_game_started`, 판 기록(`run_peak_credit` `run_spins` `run_continues_used` `run_tainted`, 메모리만)
+- `data/economy.json` 새 키: `continue_credit`(1,000), `continue_max`(3). NEW GAME 코인은 `start_credit`을 따름
+- `feel.json` 새 키 3개: `gameover_delay_sec` 0.8 / `gameover_input_lock_sec` 0.5 / `bgm_gameover_fade_sec` 0.5 (`docs/feel.md`)
+- `BgmPlayer.pause_music(fade_sec)` / `resume_music(fade_sec)`: GAME OVER 동안 BGM을 페이드로 멈추고 멈춘 자리부터 이어서 켬
+- 그림 `gameover_banner.png`(456×84), `gameover_bg.png`(640×414): 생성기 `python tools/gen_pixel_assets.py 7b [install]`(블록 글자 A·M 추가)
+- 테스트: state_test +59, view_test +113 (GAME OVER 판정·표시 시점·입력 잠금·화면과 로직 일치·CONTINUE 3번·NEW GAME 초기화·BGM 일시정지·COIN 회색·버튼 소리)
+
+### 변경
+- 시작 크레딧 0 → **3,000** (`start_credit`). 게임을 켜면 `new_game()`으로 지급(7-C에서 시작 화면 START가 이어받음). `initialize()`는 테스트 호환을 위해 크레딧 0으로 시작
+- COIN은 **개발 빌드(테스트 모드)에서만** 동작. 일반 빌드에서는 버튼이 자리 그대로 회색이고 C 키는 무시. 안내 문구·디버그 도움말 3곳은 COIN 불가일 때 "크레딧이 부족합니다."
+- 기획서 5·6장(시작 크레딧, COIN, AUTO), 새 절 "GAME OVER", 11·13장(조작표)
+- `tools/gen_pixel_assets.py`: `__pycache__/`는 `.gitignore`에 추가
+- 밸런스(`balance.json`)·로직(`SlotLogic`)·`project.godot` 변경 없음. 결과는 여전히 START 순간 RNG로 한 번 확정
+
+### 알려진 문제
+- 최고 기록 저장(`user://`)은 8단계. 지금은 판 기록을 메모리에만 집계
+- 테스트 모드 스위치(`GameState.test_mode`)는 지금 항상 켜짐. 8-B 설정 화면에서 연결
+
 ## 0.17.0 — 2026-11-10 (7-A: 밸런스 2차 조정)
 
 ### 추가

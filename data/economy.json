@@ -1,5 +1,7 @@
 {
-	"_comment": "크레딧 관련 수치. COIN 1회 지급량과 시작 크레딧. 로직(balance.json)과 분리해 둔다.",
+	"_comment": "크레딧 관련 수치. start_credit = 게임 시작·NEW GAME 때 지급, continue_credit = CONTINUE 1회 지급, continue_max = 한 판(NEW GAME 이후)에 CONTINUE 가능한 횟수(0이면 이어하기 없음), coin_amount = 개발용 COIN 1회 지급량. 로직(balance.json)과 분리해 둔다.",
 	"coin_amount": 100,
-	"start_credit": 0
+	"start_credit": 3000,
+	"continue_credit": 1000,
+	"continue_max": 3
 }

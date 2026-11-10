@@ -36,6 +36,15 @@ func _ready() -> void:
 	_test_auto_stops_when_credit_short()
 	_test_auto_stop_on_win()
 	_test_auto_same_results_as_manual()
+	_test_economy_values()
+	_test_grant_credit()
+	_test_coin_allowed()
+	_test_game_over_judgement()
+	_test_game_over_with_auto()
+	_test_coin_during_game_over()
+	_test_continue()
+	_test_continue_keeps_run()
+	_test_new_game()
 	for state: Node in _auto_states:
 		state.free()
 	_auto_states.clear()
@@ -529,3 +538,303 @@ func _test_auto_same_results_as_manual() -> void:
 	auto.stop_auto(AutoSpin.REASON_USER)
 	auto_stops.resize(spins)
 	_check(auto_stops == manual_stops and auto_payouts == manual_payouts, "같은 시드에서 AUTO 결과 = 수동 결과 (정지 위치·당첨금 %d판)" % spins)
+
+
+# ---------------------------------------------------------------- 7-B: GAME OVER / CONTINUE / NEW GAME / grant_credit / COIN
+
+## 크레딧과 베팅이 이 값인 채 한 판을 돌려 "마지막 판"을 만든다 (꽝이면 크레딧 0)
+const LAST_BET: int = 8
+const DRAIN_MAX_SPINS: int = 3000
+const SEED_SEARCH_MAX: int = 400
+
+
+## economy 값 일부를 바꾼 새 GameState (오토로드와 별개의 인스턴스)
+func _fresh_with(overrides: Dictionary, rng_seed: int = 1) -> Node:
+	var state: Node = load(GAME_STATE_SCRIPT).new()
+	var economy: Dictionary = state.call("load_economy")
+	for key: Variant in overrides:
+		economy[key] = overrides[key]
+	state.call("initialize", _data, economy, rng_seed)
+	_rejects.clear()
+	return state
+
+
+## 크레딧 LAST_BET, 베팅 LAST_BET로 한 판 돌렸을 때 당첨이 있는(want_win) / 없는 시드를 찾는다 (없으면 -1)
+func _last_spin_seed(want_win: bool) -> int:
+	for candidate: int in range(1, SEED_SEARCH_MAX):
+		var probe: Node = _fresh(candidate)
+		probe.credit = LAST_BET
+		probe.bet = LAST_BET
+		var result: SpinResult = probe.play_spin()
+		probe.free()
+		if (result != null and result.total_payout() > 0) == want_win:
+			return candidate
+	return -1
+
+
+## 크레딧을 LAST_BET로 맞춰 가며 GAME OVER가 될 때까지 판을 돌린다 (직접 대입은 테스트 준비용). GAME OVER가 됐으면 true.
+func _drain_to_game_over(state: Node) -> bool:
+	for i: int in DRAIN_MAX_SPINS:
+		if state.is_game_over():
+			return true
+		state.credit = LAST_BET
+		state.bet = LAST_BET
+		state.play_spin()
+	return state.is_game_over()
+
+
+## 이미 GAME OVER가 된 새 GameState
+func _game_over_state(overrides: Dictionary = {}, rng_seed: int = 3) -> Node:
+	var state: Node = _fresh_with(overrides, rng_seed)
+	_drain_to_game_over(state)
+	return state
+
+
+func _test_economy_values() -> void:
+	var probe: Node = load(GAME_STATE_SCRIPT).new()
+	var economy: Dictionary = probe.call("load_economy")
+	probe.free()
+	_check(economy.has("start_credit") and economy.has("continue_credit") and economy.has("continue_max") and economy.has("coin_amount"), "economy: 4개 키를 모두 읽음")
+	_check(int(economy["start_credit"]) >= 1 and int(economy["continue_credit"]) >= 1 and int(economy["continue_max"]) >= 0 and int(economy["coin_amount"]) >= 1, "economy 값이 허용 범위 안 (시작·CONTINUE 1 이상, 횟수 0 이상, COIN 1 이상)")
+	var state: Node = _fresh()
+	_check(state.credit == 0 and state.continues_left == state.continue_max and state.continue_max == int(economy["continue_max"]), "initialize는 크레딧 0으로 시작하고 이어하기 횟수만 채움")
+	state.free()
+
+
+func _test_grant_credit() -> void:
+	var state: Node = _fresh()
+	var events: Array[String] = []
+	state.connect("credit_granted", func(amount: int, reason: StringName) -> void: events.append("%d %s" % [amount, reason]))
+	var seen: Array[int] = []
+	state.connect("credit_changed", func(value: int) -> void: seen.append(value))
+	state.grant_credit(500, &"start")
+	_check(state.credit == 500 and events == ["500 start"] and seen == [500], "grant_credit(start): 크레딧 +, credit_granted와 credit_changed 시그널")
+	_check(not state.run_tainted, "start 지급은 테스트 판 표시를 남기지 않음")
+	state.grant_credit(200, &"continue")
+	_check(state.credit == 700 and not state.run_tainted, "grant_credit(continue): 표시 없음")
+	state.grant_credit(100, &"test_coin")
+	_check(state.credit == 800 and state.run_tainted and events[2] == "100 test_coin", "grant_credit(test_coin): 테스트 판 표시")
+	_check(state.run_peak_credit == 800, "지급이 최고 크레딧 기록에 반영됨")
+	state.free()
+	# 시작 지급·CONTINUE·COIN이 모두 이 입구를 거친다
+	var routed: Node = _fresh_with({ "start_credit": 40, "continue_credit": 30, "coin_amount": 20 })
+	var reasons: Array[StringName] = []
+	routed.connect("credit_granted", func(_amount: int, reason: StringName) -> void: reasons.append(reason))
+	routed.new_game()
+	routed.insert_coin()
+	_drain_to_game_over(routed)
+	routed.continue_game()
+	_check(reasons == [&"start", &"test_coin", &"continue"], "NEW GAME·COIN·CONTINUE가 모두 grant_credit을 거침 (이유 %s)" % [reasons])
+	routed.free()
+
+
+func _test_coin_allowed() -> void:
+	var state: Node = _fresh()
+	_check(state.coin_allowed() == OS.is_debug_build(), "coin_allowed: 개발 빌드(테스트 모드 켜짐)에서는 true")
+	state.dev_build = true
+	state.test_mode = true
+	_check(state.coin_allowed(), "개발 빌드 + 테스트 모드 켜짐 → COIN 가능")
+	state.test_mode = false
+	_check(not state.coin_allowed(), "개발 빌드라도 테스트 모드가 꺼지면 COIN 불가")
+	state.dev_build = false
+	state.test_mode = true
+	_check(not state.coin_allowed(), "릴리즈 빌드는 테스트 모드와 상관없이 COIN 불가")
+	var granted: Array[int] = []
+	var inserted: Array[int] = []
+	state.connect("credit_granted", func(amount: int, _reason: StringName) -> void: granted.append(amount))
+	state.connect("coin_inserted", func(amount: int) -> void: inserted.append(amount))
+	state.insert_coin()
+	_check(state.credit == 0 and granted.is_empty() and inserted.is_empty() and not state.run_tainted, "COIN 불가면 크레딧·시그널·테스트 판 표시 모두 변화 없음")
+	state.dev_build = true
+	state.insert_coin()
+	_check(state.credit == state.coin_amount and inserted == [state.coin_amount] and state.run_tainted, "COIN 가능으로 돌리면 지급 + 테스트 판 표시")
+	state.free()
+
+
+## GAME OVER 판정은 정산 순간, 로직 크레딧이 0일 때만
+func _test_game_over_judgement() -> void:
+	var lose_seed: int = _last_spin_seed(false)
+	var win_seed: int = _last_spin_seed(true)
+	_check(lose_seed > 0 and win_seed > 0, "마지막 판이 꽝인 시드·당첨인 시드를 모두 찾음")
+	# 꽝: 정산 순간 GAME OVER
+	var lost: Node = _fresh(lose_seed)
+	var signals: Array[String] = []
+	lost.connect("game_over", func() -> void: signals.append("game_over"))
+	lost.credit = LAST_BET
+	lost.bet = LAST_BET
+	lost.start_spin()
+	_check(lost.credit == 0 and lost.spinning and not lost.is_game_over() and signals.is_empty(), "회전 중에는 크레딧이 0이어도 GAME OVER가 아님")
+	lost.settle_spin()
+	_check(lost.credit == 0 and lost.is_game_over() and signals == ["game_over"], "정산 뒤 크레딧 0 → GAME OVER (시그널 한 번)")
+	_check(lost.bet == 0 and not lost.spinning and not lost.can_start() and not lost.can_raise_bet(), "GAME OVER 때 베팅 0·START/BET 불가")
+	lost.free()
+	# 당첨: 크레딧이 0이 아니므로 GAME OVER가 아님
+	var won: Node = _fresh(win_seed)
+	var won_signals: Array[String] = []
+	won.connect("game_over", func() -> void: won_signals.append("game_over"))
+	won.credit = LAST_BET
+	won.bet = LAST_BET
+	won.play_spin()
+	_check(won.credit > 0 and not won.is_game_over() and won_signals.is_empty(), "당첨으로 크레딧이 남으면 GAME OVER가 아님")
+	won.free()
+	# 크레딧이 남은 꽝: GAME OVER가 아님
+	var kept: Node = _fresh(lose_seed)
+	kept.credit = 100
+	kept.bet = LAST_BET
+	kept.play_spin()
+	_check(kept.credit == 92 and not kept.is_game_over(), "꽝이어도 크레딧이 남으면 GAME OVER가 아님")
+	kept.free()
+	# 크레딧을 직접 0으로 놓아도(정산을 거치지 않으면) 판정하지 않음
+	var direct: Node = _fresh()
+	direct.credit = 0
+	_check(not direct.is_game_over(), "정산을 거치지 않은 크레딧 0은 GAME OVER가 아님 (처음 상태 포함)")
+	direct.free()
+	# NEW GAME 직후도 GAME OVER가 아님
+	var fresh: Node = _fresh()
+	fresh.new_game()
+	_check(not fresh.is_game_over() and fresh.credit == fresh.start_credit, "NEW GAME 직후는 GAME OVER가 아님")
+	fresh.free()
+
+
+## AUTO 중 크레딧이 0이 되면: AUTO 꺼짐 → 정산 완료 → AUTO 해제 이유 → GAME OVER 순서
+func _test_game_over_with_auto() -> void:
+	var lose_seed: int = _last_spin_seed(false)
+	var state: Node = _fresh(lose_seed)
+	_auto_states.append(state)
+	state.credit = LAST_BET
+	state.bet = LAST_BET
+	state.auto_gap_sec = 0.5
+	state.start_auto()
+	var events: Array[String] = []
+	state.connect("auto_changed", func(enabled: bool, _count: int) -> void: events.append("auto_changed %s" % enabled))
+	state.connect("spin_finished", func(_r: SpinResult, _from: int) -> void: events.append("spin_finished"))
+	state.connect("auto_stopped", func(reason: StringName) -> void: events.append("auto_stopped %s" % reason))
+	state.connect("game_over", func() -> void: events.append("game_over"))
+	state.settle_spin()
+	_check(events == ["auto_changed false", "spin_finished", "auto_stopped no_credit", "game_over"], "AUTO 중 0: AUTO 꺼짐 → 정산 완료 → 해제 이유 → GAME OVER 순서 (%s)" % [events])
+	_check(not state.auto_on and state.is_game_over() and state.credit == 0, "그 뒤 AUTO는 꺼져 있고 GAME OVER")
+	state.auto_advance(10.0)
+	_check(not state.spinning, "GAME OVER 뒤에는 AUTO가 새 판을 시작하지 않음")
+	_check(not state.can_toggle_auto(), "GAME OVER 중에는 AUTO를 켤 수 없음")
+
+
+## 개발 빌드: GAME OVER 중 COIN으로 크레딧이 생기면 GAME OVER가 해제되어 상태가 일관됨
+func _test_coin_during_game_over() -> void:
+	var state: Node = _game_over_state()
+	_check(state.is_game_over() and state.credit == 0 and state.coin_allowed(), "준비: GAME OVER + 개발 빌드")
+	var game_over_count: Array[int] = [0]
+	state.connect("game_over", func() -> void: game_over_count[0] += 1)
+	var continues_before: int = state.continues_left
+	state.insert_coin()
+	_check(state.credit == state.coin_amount and not state.is_game_over(), "GAME OVER 중 COIN → 크레딧이 생기고 GAME OVER 해제")
+	_check(not state.can_continue() and not state.continue_game(), "해제된 뒤에는 CONTINUE 불가")
+	_check(state.continues_left == continues_before and state.run_tainted, "이어하기 횟수는 안 줄고, 테스트 판 표시")
+	# 다시 0이 되면 GAME OVER가 다시 판정되고, 이어하기 횟수는 그대로
+	_check(_drain_to_game_over(state) and game_over_count[0] == 1 and state.continues_left == continues_before, "다시 0이 되면 GAME OVER 다시 판정 (시그널 1번, 횟수 불변)")
+	state.free()
+
+
+func _test_continue() -> void:
+	# GAME OVER가 아니면 CONTINUE는 거절된다
+	var alive: Node = _fresh()
+	alive.credit = 50
+	_check(not alive.can_continue() and not alive.continue_game() and alive.credit == 50 and alive.continues_left == alive.continue_max, "GAME OVER가 아니면 CONTINUE 거절·상태 불변")
+	alive.free()
+	# 3번까지 가능하고 4번째는 거절
+	var state: Node = _game_over_state()
+	var results: Array[bool] = []
+	var credits: Array[int] = []
+	var lefts: Array[int] = []
+	for i: int in state.continue_max + 1:
+		if not state.is_game_over():
+			_check(_drain_to_game_over(state), "CONTINUE %d번째 준비: 다시 GAME OVER" % i)
+		results.append(state.continue_game())
+		credits.append(state.credit)
+		lefts.append(state.continues_left)
+	var want_results: Array[bool] = []
+	var want_credits: Array[int] = []
+	var want_lefts: Array[int] = []
+	for i: int in state.continue_max + 1:
+		var allowed: bool = i < state.continue_max
+		want_results.append(allowed)
+		want_credits.append(state.continue_credit if allowed else 0)
+		want_lefts.append(maxi(0, state.continue_max - i - 1))
+	_check(results == want_results, "CONTINUE는 continue_max(%d)번까지만 성공 (%s)" % [state.continue_max, results])
+	_check(credits == want_credits and lefts == want_lefts, "CONTINUE마다 continue_credit 지급·남은 횟수 감소 (크레딧 %s, 남은 %s)" % [credits, lefts])
+	_check(state.is_game_over() and not state.can_continue() and state.run_continues_used == state.continue_max, "횟수를 다 쓰면 GAME OVER 그대로·CONTINUE 불가·사용 횟수 = continue_max")
+	state.free()
+	# continue_max가 0이면 처음부터 이어하기 없음
+	var none: Node = _game_over_state({ "continue_max": 0 })
+	_check(none.is_game_over() and none.continues_left == 0 and not none.can_continue() and not none.continue_game(), "continue_max 0이면 이어하기 없음")
+	none.free()
+	# CONTINUE 뒤 베팅 복구: 직전 베팅(크레딧 이내)
+	var restored: Node = _game_over_state()
+	_check(restored.bet == 0, "GAME OVER 때 베팅은 0")
+	restored.continue_game()
+	_check(restored.bet == mini(LAST_BET, restored.continue_credit) and restored.credit == restored.continue_credit and _ints(restored.line_bets) == _expected_bets(restored.bet), "CONTINUE 뒤 베팅이 직전 베팅(최대 %d)으로 복구되고 라인 배분도 맞음" % LAST_BET)
+	_check(not restored.is_game_over() and restored.can_start(), "CONTINUE 뒤 GAME OVER 해제·START 가능")
+	restored.free()
+	var short: Node = _game_over_state({ "continue_credit": 5 })
+	short.continue_game()
+	_check(short.credit == 5 and short.bet == 5, "크레딧이 모자라면 베팅은 크레딧 이내로 복구 (5)")
+	short.free()
+
+
+## CONTINUE는 POOL·피버 카운터와 판 기록을 그대로 유지한다
+func _test_continue_keeps_run() -> void:
+	var state: Node = _fresh(11)
+	state.credit = 100000
+	state.bet = LAST_BET
+	for i: int in 40:
+		state.play_spin()
+	_check(_drain_to_game_over(state), "준비: 여러 판 뒤 GAME OVER")
+	var pool: int = state.get_pool()
+	var counts_hash: int = state.get_fever_counts().hash()
+	var spins: int = state.run_spins
+	var peak: int = state.run_peak_credit
+	_check(pool > _data.pool_initial, "준비: POOL이 초기값보다 쌓여 있음 (%d > %d)" % [pool, _data.pool_initial])
+	state.continue_game()
+	_check(state.get_pool() == pool and state.get_fever_counts().hash() == counts_hash, "CONTINUE 뒤에도 POOL·피버 카운터 유지")
+	_check(state.run_spins == spins and state.run_peak_credit >= peak and state.run_continues_used == 1, "판 기록(스핀 수·최고 크레딧)은 이어지고 이어하기 사용 수 1")
+	state.free()
+
+
+func _test_new_game() -> void:
+	var state: Node = _fresh(11)
+	state.credit = 100000
+	state.bet = LAST_BET
+	for i: int in 40:
+		state.play_spin()
+	state.insert_coin()
+	_drain_to_game_over(state)
+	state.continue_game()
+	_drain_to_game_over(state)
+	_check(state.is_game_over() and state.continues_left == state.continue_max - 1 and state.run_tainted and state.run_spins > 0, "준비: POOL·카운터가 쌓이고, 이어하기 1회 사용, 테스트 판 표시, GAME OVER")
+	var events: Array[String] = []
+	state.connect("new_game_started", func() -> void: events.append("new_game_started"))
+	state.connect("credit_granted", func(amount: int, reason: StringName) -> void: events.append("granted %d %s" % [amount, reason]))
+	_check(state.new_game(), "NEW GAME 성공")
+	_check(state.credit == state.start_credit and not state.is_game_over(), "NEW GAME: 크레딧 = 시작 크레딧(3000), GAME OVER 해제")
+	_check(state.get_pool() == _data.pool_initial and state.get_fever_counts().hash() == _data.fever_initial_counts.hash(), "NEW GAME: POOL·피버 카운터 초기화")
+	_check(state.continues_left == state.continue_max, "NEW GAME: 이어하기 횟수 복구")
+	_check(state.bet == 0 and _ints(state.line_bets) == [0, 0, 0, 0, 0, 0, 0, 0] and state.last_win == 0 and not state.auto_on and not state.spinning, "NEW GAME: 베팅 0·WIN 0·AUTO 꺼짐")
+	_check(state.run_spins == 0 and state.run_continues_used == 0 and not state.run_tainted and state.run_peak_credit == state.start_credit, "NEW GAME: 판 기록(스핀 수·이어하기 사용·테스트 판 표시·최고 크레딧) 초기화")
+	_check(events == ["new_game_started", "granted %d start" % state.start_credit], "NEW GAME 시그널: 초기화 알림 → 시작 지급 (%s)" % [events])
+	# 초기화 뒤 다시 정상 플레이 가능
+	state.raise_bet()
+	_check(state.play_spin() != null, "NEW GAME 뒤 정상 플레이")
+	state.free()
+	# 시작 크레딧 값을 따른다 (별도 NEW GAME 코인 값 없음)
+	var other: Node = _fresh_with({ "start_credit": 777 })
+	other.new_game()
+	_check(other.credit == 777, "NEW GAME 코인은 start_credit 값을 따름 (777)")
+	other.free()
+	# 회전 중에는 거절하고 아무것도 바꾸지 않는다
+	var busy: Node = _fresh(5)
+	busy.new_game()
+	busy.raise_bet()
+	busy.start_spin()
+	var credit: int = busy.credit
+	_check(not busy.new_game() and busy.credit == credit and busy.spinning, "회전 중 NEW GAME은 거절·상태 불변")
+	busy.settle_spin()
+	busy.free()

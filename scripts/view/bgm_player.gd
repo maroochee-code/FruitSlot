@@ -27,6 +27,8 @@ const LOG_START: String = "start:"
 const LOG_SWITCH: String = "to:"
 const LOG_LOOP: String = "loop:"
 const LOG_STOP: StringName = &"stop"
+const LOG_PAUSE: String = "pause"
+const LOG_RESUME: String = "resume"
 
 enum After { NONE, PAUSE, STOP }
 
@@ -60,6 +62,8 @@ var _streams: Dictionary[StringName, AudioStream] = {}
 var _voices: Array[Voice] = []
 var _primary: Dictionary[StringName, Voice] = {}
 var _current: StringName = &""
+## pause_music으로 멈춰 있는가 (GAME OVER 동안)
+var _suspended: bool = false
 var _requests: Array[StringName] = []
 var _to_fever_sec: float = 0.3
 var _to_main_sec: float = 1.0
@@ -128,6 +132,31 @@ func switch_to(track: StringName) -> void:
 	_current = track
 
 
+## 지금 곡을 fade_sec 동안 줄여서 일시정지한다 (위치 기억). GAME OVER 화면이 뜰 때 쓴다.
+func pause_music(fade_sec: float) -> void:
+	var voice: Voice = _primary.get(_current)
+	if _suspended or voice == null:
+		return
+	_suspended = true
+	_log(LOG_PAUSE)
+	voice.after = After.PAUSE
+	_fade(voice, 0.0, fade_sec)
+
+
+## pause_music으로 멈춘 곡을 멈춘 자리부터 fade_sec 동안 키우며 이어서 튼다.
+func resume_music(fade_sec: float) -> void:
+	if not _suspended:
+		return
+	_suspended = false
+	_log(LOG_RESUME)
+	_resume_or_begin(_current, fade_sec)
+
+
+## pause_music 상태인가 (resume_music 전까지 true)
+func is_suspended() -> bool:
+	return _suspended
+
+
 ## 모두 끈다 (미리보기 씬이 BGM 없이 보고 싶을 때). 다시 start()하면 처음부터 시작한다.
 func stop_all() -> void:
 	_log(String(LOG_STOP))
@@ -135,6 +164,7 @@ func stop_all() -> void:
 		_release(voice)
 	_primary.clear()
 	_current = &""
+	_suspended = false
 
 
 ## 미리보기용: 지금 곡의 위치를 옮긴다 (곡 끝 이음새를 바로 들어 볼 때)

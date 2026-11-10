@@ -706,6 +706,7 @@ BG_CENTER = (106.5, 60.0)                 # 아트 좌표. 배너·심볼 뒤에
 BG_TONES = {
     "fever": (rgb("2a0a14"), rgb("3d1220")),   # 어두운 적갈색 두 톤 (글자·숫자가 잘 보이게 차이를 작게)
     "pool": (rgb("0f3320"), rgb("164a2e")),    # 어두운 녹색 두 톤
+    "gameover": (rgb("0b0d1e"), rgb("141833")),  # 7-B: 어두운 남색 두 톤. 번쩍이지 않게 한 장만 쓰고 차이를 아주 작게
 }
 GOLD_MARK = rgb("d09a14")
 
@@ -769,6 +770,16 @@ def glyph_mask(ch, w, h, t):
         m |= _r(0, 0, w, t) | _r((w - t) // 2, 0, t, h)
     elif ch == "!":
         m |= _r(0, 0, w, h - t - 3) | _r(0, h - t - 1, w, t + 1)
+    elif ch == "A":  # 7-B: GAME OVER용. 양옆 세로 + 윗줄 + 가운데 가로 획, 윗 모서리는 둥글게
+        m |= _r(0, 0, t, h) | _r(w - t, 0, t, h) | _r(0, 0, w, t) | _r(0, h // 2, w, t)
+        m -= {(0, 0), (w - 1, 0)}
+    elif ch == "M":  # 7-B: 양옆 세로 + 가운데로 모이는 V 대각
+        m |= _r(0, 0, t, h) | _r(w - t, 0, t, h)
+        reach = h * 0.6
+        for y in range(int(reach) + 1):
+            lx = t - 1 + int(round(y / reach * (w / 2 - t - 0.5)))
+            m |= {(x, y) for x in range(lx, lx + 2)} | {(x, y) for x in range(w - lx - 2, w - lx)}
+        m |= _r(w // 2 - 1, 0, 2, int(reach) + 2)
     return m
 
 
@@ -940,8 +951,9 @@ def coin_sheet():
     return sheet
 
 
-def burst_bg(kind, frame):
+def burst_bg(kind, frame, rays=None):
     """방사형 줄무늬 배경 213x138 (아트). frame 0~2는 줄무늬가 1/3칸씩 돌아간 모양. 맨 오른쪽 1px 열은 복사."""
+    rays = BG_RAYS if rays is None else rays
     dark, light = BG_TONES[kind]
     img = Image.new("RGBA", (ART_W, OVERLAY_ART_H), dark)
     cx, cy = BG_CENTER
@@ -949,14 +961,14 @@ def burst_bg(kind, frame):
     for y in range(OVERLAY_ART_H):
         for x in range(ART_W):
             ang = math.atan2(y + 0.5 - cy, x + 0.5 - cx) / (2 * math.pi) % 1.0
-            idx = int(ang * BG_RAYS + phase) % 2
+            idx = int(ang * rays + phase) % 2
             img.putpixel((x, y), light if idx == 0 else dark)
     return img
 
 
-def bg_final(kind, frame):
+def bg_final(kind, frame, rays=None):
     """아트 x3 = 639x414 + 오른쪽 1px 복사 -> 640x414"""
-    img = scaled(burst_bg(kind, frame))
+    img = scaled(burst_bg(kind, frame, rays))
     out = Image.new("RGBA", (SCREEN_W, OVERLAY_PX_H), CLEAR)
     out.paste(img, (0, 0))
     out.paste(img.crop((img.width - 1, 0, img.width, img.height)), (img.width, 0))
@@ -1146,6 +1158,144 @@ def build_6f3a():
     img.crop((0, 0, img.width, y)).save(ROOT / "assets/_preview/6f_bulbs.png")
     print("6-F3a: bulbs.png", sheet.size)
 
+# ------------------------------------------------------------------ 7-B GAME OVER 배너·배경
+
+GAMEOVER_BANNER_SIZE = (152, 28)
+GAMEOVER_BG_RAYS = 12                     # 줄무늬 개수 (짝수). 정지 화면이라 프레임은 0번 한 장
+GAMEOVER_TEXT = "GAME OVER"
+GAMEOVER_SLATE = (rgb("6a70a0"), rgb("3a3f68"))   # 리본 두 톤 (밝음, 어두움)
+# 미리보기 배치 (아트 좌표, 213x138 영역 안. 화면 좌표 = 아트 x3). 7-B-3에서 같은 값을 상수로 쓴다.
+GAMEOVER_LAYOUT = {
+    "banner_y": 10,                 # 배너 위쪽
+    "info": (22, 44, 168, 32),      # POOL·피버 카운터 패널 x, y, 폭, 높이
+    "button_y": 84, "button_h": 18, "button_w": 80,
+    "button_xs": (22, 111),         # CONTINUE, NEW GAME 왼쪽 x
+    "left_y": 106,                  # 남은 횟수 글자 줄 위쪽
+    "hint_px_y": 390,               # 조작 안내 (640x480 px 기준)
+}
+
+
+def gameover_banner():
+    """GAME OVER 152x28. 어두운 슬레이트 리본 위 빨간 글자 (정지 그림 한 장)."""
+    w, h, t, gap, space_w = 14, 16, 3, 2, 8
+    W, H = GAMEOVER_BANNER_SIZE
+    c = Canvas(W, H)
+    rb = set()
+    for y in range(4, 24):
+        notch = 4 - abs(y - 13.5) * 0.45
+        for x in range(W):
+            if x >= notch and x < W - notch:
+                rb.add((x, y))
+    paint_mask(c, rb, lambda x, y: GAMEOVER_SLATE[0] if y < 14 else GAMEOVER_SLATE[1])
+    total = text_width(GAMEOVER_TEXT, w, gap, space_w)
+    x0, y0 = (W - total) // 2, (H - h) // 2
+    mask, letters, _ = block_text(GAMEOVER_TEXT, w, h, t, gap, space_w, x0, y0)
+    split = y0 + int(h * 0.55)
+    paint_mask(c, mask, lambda x, y: TONES["red"][0] if y < split else TONES["red"][1])
+    highlight_letters(c, letters)
+    return c
+
+
+def gameover_bg():
+    """640x414 어두운 방사형 줄무늬 (정지)"""
+    return bg_final("gameover", 0, GAMEOVER_BG_RAYS)
+
+
+def _go_button(label_top, label_bottom, state, selected, x_art, base):
+    """미리보기용 버튼 한 개. state = normal / disabled, selected면 AUTO ON 같은 금색 면."""
+    L = GAMEOVER_LAYOUT
+    px, py, pw, ph = x_art * 3, L["button_y"] * 3, L["button_w"] * 3, L["button_h"] * 3
+    skin = "on" if selected else state
+    box = nine_slice(Image.open(ROOT / f"assets/ui/button_{skin}.png").convert("RGBA"), pw, ph)
+    base.alpha_composite(box, (px, py))
+    if selected:
+        color = rgb("2b1b3d")
+    else:
+        color = rgb("6b7099") if state == "disabled" else rgb("ffffff")
+    top = _text_img(label_top, 15, color, 1)
+    bottom = _text_img(label_bottom, 15, color if selected or state == "disabled" else rgb("ffd23a"), 1)
+    gap = 6
+    y = py + (ph - (top.height + gap + bottom.height)) // 2
+    base.alpha_composite(top, (px + (pw - top.width) // 2, y))
+    base.alpha_composite(bottom, (px + (pw - bottom.width) // 2, y + top.height + gap))
+
+
+def gameover_preview(base, pool, counts, left, left_max, continue_credit, new_credit):
+    """현재 화면(base) 위에 GAME OVER 장면을 합성한다. left = 남은 이어하기 횟수."""
+    L = GAMEOVER_LAYOUT
+    scr = base.copy()
+    scr.alpha_composite(gameover_bg(), (0, 0))
+    banner = gameover_banner().image()
+    bx = (ART_W - banner.width) // 2
+    scr.alpha_composite(scaled(banner), (bx * 3, L["banner_y"] * 3))
+    # POOL·피버 카운터 패널
+    ix, iy, iw, ih = L["info"]
+    panel = nine_slice(Image.open(ROOT / "assets/ui/panel.png").convert("RGBA"), iw * 3, ih * 3)
+    scr.alpha_composite(panel, (ix * 3, iy * 3))
+    pimg = _text_img("POOL %s" % format(pool, ","), 15, rgb("ff9a1f"), 2)
+    scr.alpha_composite(pimg, (ix * 3 + (iw * 3 - pimg.width) // 2, iy * 3 + 9))
+    groups = []
+    for sym, n in counts:
+        icon = scaled(Image.open(ROOT / f"assets/ui/icons/{sym}.png").convert("RGBA"))
+        txt = _text_img("×%d" % n, 15, TONES["cream"][0], 1)
+        groups.append((icon, txt))
+    gap_in, gap_out = 6, 30
+    total = sum(i.width + gap_in + t.width for i, t in groups) + gap_out * (len(groups) - 1)
+    x = ix * 3 + (iw * 3 - total) // 2
+    y = iy * 3 + 54
+    for icon, txt in groups:
+        scr.alpha_composite(icon, (x, y))
+        scr.alpha_composite(txt, (x + icon.width + gap_in, y + (icon.height - txt.height) // 2))
+        x += icon.width + gap_in + txt.width + gap_out
+    # 버튼 2개: 이어하기가 남았으면 CONTINUE가 선택(금색), 없으면 비활성 + NEW GAME 선택
+    can = left > 0
+    cx, nx = L["button_xs"]
+    _go_button("CONTINUE", "+%s" % format(continue_credit, ","), "normal" if can else "disabled", can, cx, scr)
+    _go_button("NEW GAME", "+%s" % format(new_credit, ","), "normal", not can, nx, scr)
+    # 남은 횟수, 조작 안내
+    small = ImageFont.truetype(str(ROOT / "assets/fonts/Galmuri11.ttf"), 12)
+    d = ImageDraw.Draw(scr)
+    d.fontmode = "1"
+    left_text = "CONTINUE 남은 횟수  %d / %d" % (left, left_max)
+    d.text(((SCREEN_W - d.textlength(left_text, font=small)) // 2, L["left_y"] * 3 + 3), left_text, font=small, fill=TONES["cream"][0] if can else rgb("ff6a6a"))
+    hint = "←  → 선택     SPACE / ENTER 결정"
+    d.text(((SCREEN_W - d.textlength(hint, font=small)) // 2, L["hint_px_y"]), hint, font=small, fill=rgb("8a8aa0"))
+    return scr
+
+
+def build_7b(base, install=False):
+    """7-B 그림을 만들고 미리보기를 저장한다. install=False면 assets/_preview에만 쓴다 (승인 전).
+    install=True(7-B-3, 승인 뒤)면 assets/ui에도 gameover_banner.png / gameover_bg.png로 저장한다."""
+    prev = ROOT / "assets/_preview"
+    prev.mkdir(parents=True, exist_ok=True)
+    banner = scaled(gameover_banner().image())
+    bg = gameover_bg()
+    banner.save(prev / "7b_gameover_banner.png")
+    bg.save(prev / "7b_gameover_bg.png")
+    if install:
+        banner.save(ROOT / "assets/ui/gameover_banner.png")
+        bg.save(ROOT / "assets/ui/gameover_bg.png")
+    counts = [("cherry", 17), ("grape", 3), ("bell", 2), ("seven", 1)]
+    gameover_preview(base, 1234, counts, 2, 3, 1000, 3000).save(prev / "7b_gameover.png")
+    gameover_preview(base, 1234, counts, 0, 3, 1000, 3000).save(prev / "7b_gameover_no_continue.png")
+    # 배너를 여러 바탕 위에 x1 / 배경 모음
+    pad = 12
+    backs = [("bg", BG_TONES["gameover"][1]), ("panel", FRAME_FILL), ("wall dark", WALL_DARK), ("wall light", WALL_LIGHT)]
+    sheet = Image.new("RGBA", (banner.width + 2 * pad + 40, len(backs) * (banner.height + pad) + pad), rgb("2a2a44"))
+    for r, (_, col) in enumerate(backs):
+        ImageDraw.Draw(sheet).rectangle([pad, pad + r * (banner.height + pad), pad + banner.width + 39, pad + r * (banner.height + pad) + banner.height - 1], fill=col)
+        sheet.alpha_composite(banner, (pad + 20, pad + r * (banner.height + pad)))
+    sheet.save(prev / "7b_banner_backs.png")
+    print("GAME OVER 배너:", banner.size, "/ 배경:", bg.size)
+
+
+def build_7b_standalone(install=False):
+    """6-D 화면 근사본을 새로 만들어 7-B만 생성한다 (다른 에셋은 건드리지 않는다)."""
+    wall = scaled(wallpaper_tile().image())
+    screen, _ = preview_screen(wall, frame_final(), scaled(logo_art().image()))
+    build_7b(screen, install)
+
+
 # ------------------------------------------------------------------ 저장·미리보기
 
 BIG = {"cherry": big_cherry, "orange": big_orange, "melon": big_melon, "grape": big_grape,
@@ -1241,7 +1391,14 @@ def main():
     build_6e(screen)
     # 6-F3a: 켜진 전구 시트
     build_6f3a()
+    # 7-B: GAME OVER 미리보기 (승인 전이라 assets/_preview에만 저장)
+    build_7b(screen)
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "7b":
+        # python tools/gen_pixel_assets.py 7b [install]  : 7-B 그림만 만든다. install은 승인 뒤 assets/ui에도 저장
+        build_7b_standalone(install=len(sys.argv) > 2 and sys.argv[2] == "install")
+    else:
+        main()

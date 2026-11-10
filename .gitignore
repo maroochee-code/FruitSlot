@@ -4,3 +4,6 @@
 
 # 비밀 정보
 .env
+
+# Python 캐시
+__pycache__/

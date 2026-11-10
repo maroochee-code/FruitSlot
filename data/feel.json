@@ -39,5 +39,8 @@
 	"coin_count_mid": 6,
 	"coin_count_big": 12,
 	"coin_fly_sec": 0.45,
-	"auto_effect_scale": 0.5
+	"auto_effect_scale": 0.5,
+	"gameover_delay_sec": 0.8,
+	"gameover_input_lock_sec": 0.5,
+	"bgm_gameover_fade_sec": 0.5
 }

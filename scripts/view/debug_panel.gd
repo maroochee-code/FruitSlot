@@ -6,6 +6,8 @@ const BG_COLOR: Color = Color(0, 0, 0, 0.88)
 const TEXT_COLOR: Color = Color("C8FFC8")
 
 var _label: Label = Label.new()
+## 지금 글자가 도움말인가 (스핀 결과가 표시되면 false)
+var _showing_help: bool = true
 
 
 func _init() -> void:
@@ -17,7 +19,23 @@ func _init() -> void:
 	# 오른쪽 끝에서 잘리지 않도록 줄바꿈을 켠다.
 	_label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	add_child(_label)
-	_label.text = "[디버그] F1: 이 창 켜기/끄기\nC=COIN B=BET 스페이스/엔터=START"
+	refresh_help(true)
+
+
+## 처음 도움말. COIN을 쓸 수 있을 때만 COIN 키(C)를 안내한다 (coin_allowed 기준).
+func refresh_help(coin_allowed: bool) -> void:
+	# 스핀 결과가 표시된 뒤에는 결과 글자를 지우지 않는다
+	if not _showing_help:
+		return
+	if coin_allowed:
+		_label.text = "[디버그] F1: 이 창 켜기/끄기\nC=COIN B=BET 스페이스/엔터=START"
+	else:
+		_label.text = "[디버그] F1: 이 창 켜기/끄기\nB=BET 스페이스/엔터=START (COIN 사용 불가)"
+
+
+## 지금 도움말 글자 (테스트용)
+func help_text() -> String:
+	return _label.text
 
 
 func show_result(result: SpinResult, data: BalanceData, grid_matches: bool, credit_after: int) -> void:
@@ -38,6 +56,7 @@ func show_result(result: SpinResult, data: BalanceData, grid_matches: bool, cred
 		counts.append("%s %d" % [symbol, result.fever_counts_after.get(symbol, -1)])
 	rows.append("피버 남음: %s" % ", ".join(counts))
 	rows.append("POOL %d" % result.pool_after)
+	_showing_help = false
 	_label.text = "\n".join(rows)
 
 

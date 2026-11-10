@@ -4,6 +4,14 @@ extends Node
 ## 화면이 이 변수들을 직접 바꾸면 안 된다. (class_name을 붙이면 오토로드 이름과 충돌하므로 붙이지 않는다.)
 
 const ECONOMY_PATH: String = "res://data/economy.json"
+## economy.json 값의 허용 범위
+const CREDIT_VALUE_MAX: int = 999999
+const CONTINUE_MAX_LIMIT: int = 99
+
+## 크레딧을 올리는 이유 (grant_credit). 당첨금은 정산 경로라서 여기에 없다.
+const GRANT_START: StringName = &"start"
+const GRANT_CONTINUE: StringName = &"continue"
+const GRANT_TEST_COIN: StringName = &"test_coin"
 
 const REASON_NO_CREDIT: StringName = &"no_credit"
 const REASON_NO_BET: StringName = &"no_bet"
@@ -23,6 +31,12 @@ signal action_rejected(reason: StringName)
 signal auto_changed(enabled: bool, count: int)
 ## AUTO가 꺼진 이유 (AutoSpin.REASON_*). auto_changed 다음에 온다.
 signal auto_stopped(reason: StringName)
+## 크레딧이 올라갔다 (시작 지급·CONTINUE·개발용 COIN). reason은 GRANT_* 중 하나
+signal credit_granted(amount: int, reason: StringName)
+## 정산 뒤 크레딧이 0이 되어 GAME OVER 상태가 됐다 (AUTO 해제 알림 다음에 온다)
+signal game_over
+## NEW GAME으로 크레딧·POOL·피버 카운터·이어하기 횟수가 처음 상태로 돌아갔다 (화면이 오른쪽 패널을 다시 그리는 용도)
+signal new_game_started
 
 var credit: int = 0
 var bet: int = 0
@@ -30,6 +44,22 @@ var bet: int = 0
 var line_bets: PackedInt32Array = PackedInt32Array()
 var last_win: int = 0
 var coin_amount: int = 0
+## 시작·NEW GAME 지급 크레딧 / CONTINUE 1회 지급 크레딧 / CONTINUE 최대 횟수 (economy.json)
+var start_credit: int = 0
+var continue_credit: int = 0
+var continue_max: int = 0
+## 남은 CONTINUE 횟수. NEW GAME에서 continue_max로 복구된다.
+var continues_left: int = 0
+## 개발 빌드인가. 내보낸 릴리즈 exe에서는 false. 테스트가 릴리즈 상황을 흉내 내려고 바꿔 넣을 수 있다.
+var dev_build: bool = OS.is_debug_build()
+## 테스트 모드 스위치. 지금은 항상 켜짐이고, 8-B에서 설정 화면이 이 값을 바꾼다.
+var test_mode: bool = true
+## 이번 판(NEW GAME 이후)의 기록. 메모리 집계만 하고 저장하지 않는다 (저장은 8단계).
+var run_peak_credit: int = 0
+var run_spins: int = 0
+var run_continues_used: int = 0
+## 개발용 COIN을 쓴 판인가 (최고 기록·통계에서 "테스트 판"으로 제외하는 표시)
+var run_tainted: bool = false
 var ready_ok: bool = false
 ## 릴이 도는 중(START ~ 정산 전). 이 동안 COIN/BET/MAX BET/CANCEL/START는 거절된다.
 var spinning: bool = false
@@ -53,6 +83,10 @@ var _auto: AutoSpin = AutoSpin.new()
 var _logic: SlotLogic
 ## START에서 확정됐지만 아직 정산하지 않은 결과
 var _pending: SpinResult
+## GAME OVER 상태인가 (정산에서 크레딧이 0이 되면 켜지고, CONTINUE·NEW GAME에서 꺼진다)
+var _game_over: bool = false
+## GAME OVER가 된 판의 베팅 (CONTINUE 뒤 복구용. 정산에서 베팅이 0으로 내려가기 전 값)
+var _bet_at_game_over: int = 0
 
 
 func _ready() -> void:
@@ -62,6 +96,8 @@ func _ready() -> void:
 		push_error("GameState: 데이터 로드 실패")
 		return
 	initialize(data, economy, int(Time.get_ticks_usec()))
+	# 게임을 켜면 시작 크레딧을 준다. 7-C의 시작 화면이 생기면 START가 이 호출을 대신한다.
+	new_game()
 
 
 ## economy.json을 읽어 검사한다. 문제가 있으면 빈 사전을 돌려주고 에러를 출력한다.
@@ -71,16 +107,32 @@ static func load_economy(path: String = ECONOMY_PATH) -> Dictionary:
 	if text.is_empty() or json.parse(text) != OK or typeof(json.data) != TYPE_DICTIONARY:
 		push_error("GameState: %s 를 읽을 수 없음" % path)
 		return {}
-	var raw: Dictionary = json.data
+	return economy_from_dict(json.data)
+
+
+## 사전에서 economy 값을 꺼내 범위를 검사한다. 문제가 있으면 빈 사전을 돌려주고 에러를 출력한다.
+static func economy_from_dict(raw: Dictionary) -> Dictionary:
 	var coin: int = int(raw.get("coin_amount", 0))
-	var start: int = int(raw.get("start_credit", -1))
-	if coin <= 0 or start < 0:
-		push_error("GameState: economy.json의 coin_amount는 1 이상, start_credit은 0 이상이어야 함")
+	var start: int = int(raw.get("start_credit", 0))
+	var cont: int = int(raw.get("continue_credit", 0))
+	var cont_max: int = int(raw.get("continue_max", -1))
+	var problems: PackedStringArray = PackedStringArray()
+	if coin < 1:
+		problems.append("coin_amount는 1 이상")
+	if start < 1 or start > CREDIT_VALUE_MAX:
+		problems.append("start_credit은 1~%d" % CREDIT_VALUE_MAX)
+	if cont < 1 or cont > CREDIT_VALUE_MAX:
+		problems.append("continue_credit은 1~%d" % CREDIT_VALUE_MAX)
+	if cont_max < 0 or cont_max > CONTINUE_MAX_LIMIT:
+		problems.append("continue_max는 0~%d" % CONTINUE_MAX_LIMIT)
+	if not problems.is_empty():
+		push_error("GameState: economy.json 값이 범위를 벗어남: " + ", ".join(problems))
 		return {}
-	return { "coin_amount": coin, "start_credit": start }
+	return { "coin_amount": coin, "start_credit": start, "continue_credit": cont, "continue_max": cont_max }
 
 
 ## 상태를 처음으로 되돌린다. 테스트에서는 원하는 데이터와 시드를 넣어 부른다.
+## 크레딧은 0으로 시작한다 (시작 크레딧은 new_game()이 grant_credit으로 준다).
 func initialize(data: BalanceData, economy: Dictionary, rng_seed: int) -> void:
 	_data = data
 	_logic = SlotLogic.new(data, rng_seed)
@@ -89,12 +141,20 @@ func initialize(data: BalanceData, economy: Dictionary, rng_seed: int) -> void:
 	_auto.gap_sec = gap
 	_auto.stop_on_win_at = data.auto_stop_on_win_at
 	coin_amount = int(economy["coin_amount"])
-	credit = int(economy["start_credit"])
+	start_credit = int(economy["start_credit"])
+	continue_credit = int(economy["continue_credit"])
+	continue_max = int(economy["continue_max"])
+	continues_left = continue_max
+	credit = 0
 	bet = 0
 	line_bets = _logic.distribute_bet(0)
 	last_win = 0
 	spinning = false
 	_pending = null
+	_game_over = false
+	_bet_at_game_over = 0
+	_deferred_stop_reason = &""
+	_reset_run_record()
 	ready_ok = true
 
 
@@ -142,12 +202,88 @@ func can_start() -> bool:
 	return not spinning and bet >= 1 and bet <= credit
 
 
+## COIN을 쓸 수 있는가. 개발 빌드이고 테스트 모드가 켜져 있을 때만 true.
+## 내보낸 릴리즈 빌드에서는 항상 false다 (8-B의 테스트 모드 스위치는 test_mode에 연결한다).
+func coin_allowed() -> bool:
+	return dev_build and test_mode
+
+
+## 개발용 COIN. 쓸 수 없는 상태(회전 중, coin_allowed가 false)면 아무것도 하지 않는다.
+## GAME OVER 중에 불려도 막지 않는다 (입력 잠금은 화면이 맡고, 크레딧이 생기면 grant_credit이 GAME OVER를 해제한다).
 func insert_coin() -> void:
-	if spinning:
+	if spinning or not coin_allowed():
 		return
-	credit += coin_amount
 	coin_inserted.emit(coin_amount)
+	grant_credit(coin_amount, GRANT_TEST_COIN)
+
+
+## 크레딧이 올라가는 입구. 시작 지급·CONTINUE·개발용 COIN이 모두 여기를 거친다 (당첨금은 정산 경로).
+## 개발용 COIN이면 이번 판에 "테스트 판" 표시를 남긴다.
+## 크레딧이 0보다 커지면 GAME OVER 상태를 해제한다 (GAME OVER는 항상 "크레딧 0 + 진행 중인 판 없음"과 일치해야 한다).
+func grant_credit(amount: int, reason: StringName) -> void:
+	if amount <= 0:
+		push_error("GameState.grant_credit: amount는 1 이상이어야 함 (%d)" % amount)
+		return
+	credit += amount
+	if credit > 0:
+		_game_over = false
+	run_peak_credit = maxi(run_peak_credit, credit)
+	if reason == GRANT_TEST_COIN:
+		run_tainted = true
+	credit_granted.emit(amount, reason)
 	credit_changed.emit(credit)
+
+
+## GAME OVER 상태인가 (정산에서 크레딧이 0이 된 뒤 CONTINUE·NEW GAME을 고르기 전까지)
+func is_game_over() -> bool:
+	return _game_over
+
+
+func can_continue() -> bool:
+	return _game_over and continues_left > 0
+
+
+## CONTINUE: 이어하기 횟수를 하나 쓰고 continue_credit을 준다. POOL·피버 카운터는 그대로 두고,
+## 베팅은 GAME OVER가 된 판의 베팅으로 되돌린다 (크레딧이 모자라면 크레딧 이내로).
+func continue_game() -> bool:
+	if not can_continue():
+		return false
+	continues_left -= 1
+	run_continues_used += 1
+	_game_over = false
+	grant_credit(continue_credit, GRANT_CONTINUE)
+	var restored: int = mini(_bet_at_game_over, credit)
+	if restored >= 1:
+		_set_bet(restored)
+	return true
+
+
+## NEW GAME(7-C의 START도 같은 함수): 크레딧을 start_credit으로 주고, POOL·피버 카운터·이어하기 횟수·기록을 처음으로 되돌린다.
+## 베팅·WIN은 0, AUTO는 끈다. 난수 시드는 건드리지 않는다. 회전 중이면 거절한다.
+func new_game() -> bool:
+	if spinning:
+		return false
+	stop_auto(AutoSpin.REASON_USER)
+	_logic.reset_state()
+	_game_over = false
+	_bet_at_game_over = 0
+	continues_left = continue_max
+	_reset_run_record()
+	credit = 0
+	if bet != 0:
+		_set_bet(0)
+	if last_win != 0:
+		_set_win(0)
+	new_game_started.emit()
+	grant_credit(start_credit, GRANT_START)
+	return true
+
+
+func _reset_run_record() -> void:
+	run_peak_credit = 0
+	run_spins = 0
+	run_continues_used = 0
+	run_tainted = false
 
 
 ## BET +1. 최대에서 한 번 더 누르면 1로 돌아간다. 새 베팅이 크레딧을 넘으면 거절한다.
@@ -223,15 +359,23 @@ func settle_spin() -> SpinResult:
 	_pending = null
 	spinning = false
 	credit += result.total_payout()
+	run_spins += 1
+	run_peak_credit = maxi(run_peak_credit, credit)
 	credit_changed.emit(credit)
 	_set_win(result.total_payout())
 	_judge_auto_after_settle(result)
+	var bet_before_lowering: int = bet
 	var lowered_from: int = _lower_bet_to_credit()
 	spin_finished.emit(result, lowered_from)
 	if _deferred_stop_reason != &"":
 		var reason: StringName = _deferred_stop_reason
 		_deferred_stop_reason = &""
 		auto_stopped.emit(reason)
+	# GAME OVER 판정은 정산 순간에만, 로직 값(크레딧)으로 한다. 화면은 연출이 끝난 뒤에 띄운다.
+	if credit <= 0:
+		_bet_at_game_over = bet_before_lowering
+		_game_over = true
+		game_over.emit()
 	return result
 
 

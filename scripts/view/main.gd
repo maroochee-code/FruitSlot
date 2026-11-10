@@ -66,6 +66,8 @@ const POOL_TIER_RED: int = 2
 const BLINK_PERIOD: float = 0.8
 ## feel.json 수정 시각을 확인하는 간격 (초)
 const FEEL_POLL_SEC: float = 0.5
+## COIN을 쓸 수 없을 때(릴리즈 빌드 등) 크레딧이 없다는 안내
+const NO_CREDIT_NOTICE: String = "크레딧이 부족합니다."
 
 var _data: BalanceData
 ## 지금 도는(또는 마지막으로 돈) 스핀이 쓰는 손맛 설정. 스핀 시작 때만 바뀐다.
@@ -116,6 +118,12 @@ var _max_bet_button: Button
 var _cancel_button: Button
 var _start_button: Button
 var _auto_button: Button
+var _coin_button: Button
+## GAME OVER 화면 (7-B). 크레딧이 0이 된 판의 연출이 끝나고 gameover_delay_sec가 지나면 뜬다.
+var _game_over: GameOverOverlay
+## GameState.game_over를 받았지만 아직 화면을 띄우지 않았는지, 띄우기까지 남은 시간 (연출이 끝난 뒤부터 센다)
+var _game_over_pending: bool = false
+var _game_over_delay_left: float = 0.0
 ## 효과음 (6-F1). 소리는 이미 정해진 결과를 알려 주기만 한다.
 var _sound: SoundBank
 ## BGM (6-F2). 피버 연출이 시작되면 피버 곡, 끝나면 메인 곡 (건너뛰어도 한 쌍)
@@ -151,6 +159,7 @@ func _ready() -> void:
 	_build_stop_buttons()
 	_build_settle_show()
 	_build_debug()
+	_build_game_over()
 	_build_sound()
 	_connect_state()
 	GameState.refresh()
@@ -207,6 +216,7 @@ func _announce_feel(message: String) -> void:
 func advance(delta: float) -> void:
 	_bgm.advance(delta)
 	_settle.advance(delta)
+	_game_over.advance(delta)
 	_advance_bulbs(delta)
 	_advance_blink(delta)
 	if _spin.is_active():
@@ -222,15 +232,35 @@ func advance(delta: float) -> void:
 	# AUTO 대기는 정산 연출이 끝난 뒤부터 센다 (연출 중에는 시간을 흘리지 않는다)
 	if not _settle.is_active():
 		GameState.auto_advance(delta)
+	_advance_game_over(delta)
+
+
+## GAME OVER 화면을 띄울 때를 기다린다. 회전·정산 대기·정산 연출·피버 연출이 모두 끝난 뒤부터 gameover_delay_sec를 센다.
+## 기다리는 동안 크레딧이 생겨 GAME OVER가 풀렸으면(개발 빌드 COIN 등) 취소한다.
+func _advance_game_over(delta: float) -> void:
+	if not _game_over_pending:
+		return
+	if not GameState.is_game_over():
+		_game_over_pending = false
+		return
+	if GameState.spinning or _settling or _settle.is_active() or _fever_overlay.is_playing():
+		return
+	_game_over_delay_left -= delta
+	if _game_over_delay_left <= 0.0:
+		_show_game_over()
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	var key: InputEventKey = event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
+	# GAME OVER 화면이 떠 있는 동안은 화면용 키(←/→/스페이스/엔터)와 개발용 F1·F6만 받는다
+	if _game_over.is_open():
+		_handle_game_over_key(key)
+		return
 	match key.keycode:
 		KEY_C:
-			GameState.insert_coin()
+			press_coin()
 		KEY_B:
 			press_bet()
 		KEY_M:
@@ -238,7 +268,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		KEY_X:
 			press_cancel()
 		KEY_A:
-			GameState.toggle_auto()
+			press_auto()
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
 			do_spin()
 		KEY_1, KEY_KP_1:
@@ -253,8 +283,39 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reload_feel()
 
 
+## GAME OVER 화면이 떠 있을 때의 키 처리
+func _handle_game_over_key(key: InputEventKey) -> void:
+	match key.keycode:
+		KEY_LEFT:
+			_game_over.move(-1)
+		KEY_RIGHT:
+			_game_over.move(1)
+		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
+			_game_over.confirm()
+		KEY_F1:
+			toggle_debug()
+		KEY_F6:
+			reload_feel()
+
+
+## COIN (버튼·C 키). 개발 빌드(coin_allowed)에서만 동작하고, GAME OVER 화면이 떠 있는 동안은 무효다.
+func press_coin() -> void:
+	if _game_over.is_open() or not GameState.coin_allowed():
+		return
+	GameState.insert_coin()
+
+
+## AUTO 켜기/끄기 (버튼·A 키). GAME OVER 화면이 떠 있는 동안은 무효다.
+func press_auto() -> void:
+	if _game_over.is_open():
+		return
+	GameState.toggle_auto()
+
+
 ## BET +1 (버튼·B 키). 받아들여지면 true이고 BET 소리가 난다. 거절은 GameState의 action_rejected로 알려진다.
 func press_bet() -> bool:
+	if _game_over.is_open():
+		return false
 	var accepted: bool = GameState.raise_bet()
 	if accepted:
 		_sound.play(SoundBank.NAME_BET)
@@ -263,6 +324,8 @@ func press_bet() -> bool:
 
 ## MAX BET (버튼·M 키)
 func press_max_bet() -> bool:
+	if _game_over.is_open():
+		return false
 	var accepted: bool = GameState.max_bet()
 	if accepted:
 		_sound.play(SoundBank.NAME_BET)
@@ -271,6 +334,8 @@ func press_max_bet() -> bool:
 
 ## CANCEL (버튼·X 키)
 func press_cancel() -> bool:
+	if _game_over.is_open():
+		return false
 	var accepted: bool = GameState.cancel_bet()
 	if accepted:
 		_sound.play(SoundBank.NAME_CANCEL)
@@ -321,6 +386,9 @@ func bgm_player() -> BgmPlayer:
 ## START. 멈춰 있으면 크레딧 차감 + 결과 확정(GameState), 릴이 돌고 있으면 남은 릴을 차례로 정지시킨다.
 ## 새 스핀이 시작됐을 때만 결과를 돌려준다.
 func do_spin() -> SpinResult:
+	# GAME OVER 화면이 떠 있는 동안 START(스페이스)는 화면의 결정 키라서 새 판을 시작하지 않는다
+	if _game_over.is_open():
+		return null
 	# 피버 연출 중 START(스페이스)는 연출 건너뛰기. 숫자는 연출이 끝날 때 똑같이 반영된다.
 	if _fever_overlay.is_playing():
 		_skipping_fever = true
@@ -342,7 +410,7 @@ func do_spin() -> SpinResult:
 
 ## STOP 1/2/3 (index 0~2). 받아들여지면 true.
 func press_stop(index: int) -> bool:
-	if GameState.auto_on:
+	if GameState.auto_on or _game_over.is_open():
 		return false
 	var accepted: bool = _spin.press_stop(index)
 	_refresh_buttons()
@@ -426,12 +494,24 @@ func _connect_state() -> void:
 	GameState.auto_stopped.connect(_on_auto_stopped)
 	GameState.spin_started.connect(_on_spin_started)
 	GameState.spin_finished.connect(_on_spin_finished)
+	GameState.game_over.connect(_on_game_over)
+	GameState.new_game_started.connect(_on_new_game_started)
 	_spin.reel_started.connect(_on_reel_started)
 	_spin.reel_stopped.connect(_on_reel_stopped)
 	_spin.all_stopped.connect(_on_all_stopped)
 
 
+## GAME OVER 화면이 열려 있는데 로직이 GAME OVER가 아니게 됐으면(CONTINUE·NEW GAME·크레딧 지급) 닫고 BGM을 이어서 튼다.
+## 화면과 로직 상태가 어긋난 채로 남지 않게 하는 단일 지점이다.
+func _sync_game_over_screen() -> void:
+	if not _game_over.is_open() or GameState.is_game_over():
+		return
+	_game_over.close()
+	_bgm.resume_music(_feel.bgm_gameover_fade_sec)
+
+
 func _on_credit_changed(credit: int) -> void:
+	_sync_game_over_screen()
 	# 정산 때가 아닌 변화(COIN·다음 판 차감 등)가 연출 도중에 오면 연출 숫자를 먼저 최종값으로 확정한다
 	if not _in_settle_call:
 		confirm_settle_show()
@@ -530,6 +610,41 @@ func _on_auto_stopped(reason: StringName) -> void:
 	_refresh_notice()
 
 
+## 크레딧 0으로 정산됐다. 연출이 모두 끝난 뒤 gameover_delay_sec가 지나면 화면을 띄운다 (_advance_game_over).
+func _on_game_over() -> void:
+	_game_over_pending = true
+	_game_over_delay_left = _feel.gameover_delay_sec
+
+
+func _show_game_over() -> void:
+	_game_over_pending = false
+	_sound.play(SoundBank.NAME_GAMEOVER)
+	_bgm.pause_music(_feel.bgm_gameover_fade_sec)
+	_game_over.open(_data, GameState.get_pool(), GameState.get_fever_counts(), GameState.continues_left, GameState.continue_max, GameState.continue_credit, GameState.start_credit, _feel.gameover_input_lock_sec)
+	_refresh_buttons()
+	_refresh_notice()
+
+
+## CONTINUE·NEW GAME이 받아들여졌을 때만 버튼 소리(button.wav)를 낸다
+func _on_continue_pressed() -> void:
+	if GameState.continue_game():
+		_sound.play(SoundBank.NAME_BUTTON)
+
+
+func _on_new_game_pressed() -> void:
+	if GameState.new_game():
+		_sound.play(SoundBank.NAME_BUTTON)
+
+
+## NEW GAME(또는 시작): 오른쪽 패널(POOL·피버 카운터)과 당첨선을 처음 상태로 다시 그린다
+func _on_new_game_started() -> void:
+	_sync_game_over_screen()
+	_game_over_pending = false
+	_overlay.clear_wins()
+	_notice_override = ""
+	_refresh_side_panel(GameState.get_pool(), GameState.get_fever_counts())
+
+
 func _on_coin_inserted(_amount: int) -> void:
 	_notice_override = ""
 	_sound.play(SoundBank.NAME_COIN)
@@ -538,7 +653,7 @@ func _on_coin_inserted(_amount: int) -> void:
 func _on_action_rejected(reason: StringName) -> void:
 	_sound.play(SoundBank.NAME_CANCEL)
 	if reason == GameState.REASON_NO_CREDIT:
-		_notice_override = "크레딧이 없습니다. COIN(C)을 누르세요."
+		_notice_override = "크레딧이 없습니다. COIN(C)을 누르세요." if GameState.coin_allowed() else NO_CREDIT_NOTICE
 	elif reason == GameState.REASON_NO_BET:
 		_notice_override = "BET(B)을 눌러 베팅하세요."
 	elif reason == GameState.REASON_BET_OVER_CREDIT:
@@ -698,7 +813,7 @@ func _refresh_notice() -> void:
 		if not GameState.auto_on:
 			lines.append("STOP 1·2·3 또는 START로 릴을 멈추세요.")
 	elif GameState.credit < 1:
-		lines.append("COIN(C)으로 크레딧을 넣으세요.")
+		lines.append("COIN(C)으로 크레딧을 넣으세요." if GameState.coin_allowed() else NO_CREDIT_NOTICE)
 	elif GameState.bet < 1:
 		lines.append("BET(B)으로 베팅하세요.")
 	if GameState.bet < _data.fever_min_total_bet and not GameState.auto_on:
@@ -716,6 +831,9 @@ func _refresh_buttons() -> void:
 	for i: int in _stop_buttons.size():
 		_stop_buttons[i].disabled = not _spin.can_stop(i) or GameState.auto_on
 	_auto_button.disabled = not GameState.can_toggle_auto()
+	# COIN은 개발 빌드(coin_allowed)에서만 켜지고, GAME OVER 화면이 떠 있는 동안은 꺼진다
+	_coin_button.disabled = not GameState.coin_allowed() or _game_over.is_open()
+	_debug.refresh_help(GameState.coin_allowed())
 
 
 ## 오른쪽 패널: POOL 숫자(색 단계)와 피버 카운터. 스핀 결과의 스냅샷을 받아 정지 후에만 갱신한다.
@@ -820,7 +938,7 @@ func _build_stop_buttons() -> void:
 		button.pressed.connect(press_stop.bind(col))
 		_stop_buttons.append(button)
 	_auto_button = _make_button("AutoButton", "AUTO", AUTO_RECT)
-	_auto_button.pressed.connect(GameState.toggle_auto)
+	_auto_button.pressed.connect(press_auto)
 
 
 func _build_info_boxes() -> void:
@@ -856,8 +974,8 @@ func _build_buttons() -> void:
 	add_child(strip)
 	_cancel_button = _make_row_button("CancelButton", "CANCEL", 0)
 	_cancel_button.pressed.connect(press_cancel)
-	var coin: Button = _make_row_button("CoinButton", "COIN", 1)
-	coin.pressed.connect(GameState.insert_coin)
+	_coin_button = _make_row_button("CoinButton", "COIN", 1)
+	_coin_button.pressed.connect(press_coin)
 	_start_button = _make_row_button("StartButton", "START", 2)
 	_start_button.pressed.connect(do_spin)
 	_bet_button = _make_row_button("BetButton", "BET", 3)
@@ -923,6 +1041,23 @@ func _build_sound() -> void:
 	add_child(_bgm)
 	_bgm.apply_feel(_feel)
 	_bgm.start()
+
+
+## GAME OVER 화면: 피버 오버레이처럼 맨 위에 둔다 (둘은 동시에 뜨지 않는다)
+func _build_game_over() -> void:
+	_game_over = GameOverOverlay.new()
+	add_child(_game_over)
+	_game_over.continue_pressed.connect(_on_continue_pressed)
+	_game_over.new_game_pressed.connect(_on_new_game_pressed)
+
+
+## GAME OVER 화면이 떠 있는가 / 화면 노드 (테스트용)
+func game_over_open() -> bool:
+	return _game_over.is_open()
+
+
+func game_over_overlay() -> GameOverOverlay:
+	return _game_over
 
 
 func _build_debug() -> void:

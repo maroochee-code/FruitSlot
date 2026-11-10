@@ -65,6 +65,7 @@ func _ready() -> void:
 	await _test_bulbs()
 	await _test_auto_view()
 	await _test_settle_show()
+	await _test_game_over_view()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -2167,5 +2168,361 @@ func _test_settle_auto() -> void:
 	_advance_for(main, 0.3)
 	_check(GameState.spinning and GameState.auto_count() == count + 1, "대기시간이 지나면 다음 판 시작")
 	GameState.stop_auto(AutoSpin.REASON_USER)
+	main.free()
+	await get_tree().process_frame
+
+
+# ---------------------------------------------------------------- 7-B-3: GAME OVER 화면
+
+## 크레딧 = 베팅 = GO_BET인 마지막 판
+const GO_BET: int = 8
+const GO_DRAIN_MAX_SPINS: int = 200
+const GO_SCREEN_BOTTOM: float = 414.0
+
+
+func _test_game_over_view() -> void:
+	GameState.dev_build = OS.is_debug_build()
+	var lose_seed: int = _auto_find_seed(GO_BET, GO_BET, false)
+	var win_seed: int = _auto_find_seed(GO_BET, GO_BET, true)
+	_check(lose_seed > 0 and win_seed > 0, "GAME OVER 테스트용 시드(마지막 판이 꽝 / 당첨)를 찾음")
+	_test_go_feel_keys()
+	_test_go_format_and_bgm()
+	await _test_go_timing(lose_seed, win_seed)
+	await _test_go_screen(lose_seed)
+	await _test_go_input_blocked(lose_seed)
+	await _test_go_sync_with_logic(lose_seed)
+	await _test_go_continue_and_new_game(lose_seed)
+	await _test_go_coin_disabled()
+	GameState.dev_build = OS.is_debug_build()
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+
+
+## 크레딧 GO_BET·베팅 GO_BET로 한 판 돌려 정산까지 끝낸다
+func _go_run_spin(main: Control) -> void:
+	main.do_spin()
+	var time: float = 0.0
+	while GameState.spinning and time < MAX_SPIN_SEC:
+		main.advance(FRAME_DT)
+		time += FRAME_DT
+
+
+## 꽝 판을 돌려 GAME OVER 화면이 뜬 main (크레딧 0)
+func _go_open_main(lose_seed: int) -> Control:
+	var main: Control = await _auto_main(lose_seed, GO_BET, GO_BET)
+	_go_run_spin(main)
+	_advance_for(main, main.feel().gameover_delay_sec + 0.1)
+	return main
+
+
+## 이어하기를 쓰려고 GAME OVER가 다시 될 때까지 판을 돌린다 (크레딧을 GO_BET로 맞춰 가며). 화면이 뜰 때까지 시간을 흘린다.
+func _go_drain(main: Control) -> bool:
+	for i: int in GO_DRAIN_MAX_SPINS:
+		if GameState.is_game_over():
+			break
+		GameState.credit = GO_BET
+		GameState.bet = GO_BET
+		_go_run_spin(main)
+	_advance_for(main, main.feel().gameover_delay_sec + 0.1)
+	return GameState.is_game_over() and main.game_over_open()
+
+
+func _go_rows(main: Control) -> Array[Rect2]:
+	var rects: Array[Rect2] = []
+	for node_name: String in ["CoinButton", "StartButton", "BetButton", "MaxBetButton", "CancelButton", "AutoButton", "StopButton1", "StopButton3", "CreditBox", "WinBox", "BetBox", "NoticeBox", "PoolBox", "FeverBox", "PaytablePanel", "Title", "Reels"]:
+		var control: Control = main.get_node(node_name)
+		rects.append(Rect2(control.position, control.size))
+	return rects
+
+
+func _go_snapshot() -> Dictionary:
+	return { "credit": GameState.credit, "bet": GameState.bet, "lines": GameState.line_bets.duplicate(), "win": GameState.last_win, "auto": GameState.auto_on, "spinning": GameState.spinning, "continues": GameState.continues_left, "over": GameState.is_game_over() }
+
+
+func _test_go_feel_keys() -> void:
+	var defaults: FeelConfig = FeelConfig.from_dict({})
+	_check(defaults.gameover_delay_sec == 0.8 and defaults.gameover_input_lock_sec == 0.5 and defaults.bgm_gameover_fade_sec == 0.5, "feel 새 키 3개 기본값 (0.8 / 0.5 / 0.5)")
+	var bad: FeelConfig = FeelConfig.from_dict({ "gameover_delay_sec": 99.0, "gameover_input_lock_sec": 3.5, "bgm_gameover_fade_sec": -1.0 })
+	_check(bad.gameover_delay_sec == 0.8 and bad.gameover_input_lock_sec == 0.5 and bad.bgm_gameover_fade_sec == 0.5, "범위 밖 값(5 초과 / 3 초과 / 음수)은 기본값으로 대체")
+	var edge: FeelConfig = FeelConfig.from_dict({ "gameover_delay_sec": 0.0, "gameover_input_lock_sec": 3.0, "bgm_gameover_fade_sec": 5.0 })
+	_check(edge.gameover_delay_sec == 0.0 and edge.gameover_input_lock_sec == 3.0 and edge.bgm_gameover_fade_sec == 5.0, "범위 끝 값(0 / 3 / 5)은 그대로 읽음")
+	var from_file: FeelConfig = FeelConfig.load_from_file(FeelConfig.DEFAULT_PATH, false)
+	_check(from_file.errors.is_empty() and from_file.gameover_delay_sec == 0.8 and from_file.gameover_input_lock_sec == 0.5 and from_file.bgm_gameover_fade_sec == 0.5, "feel.json에 새 키 3개가 있고 문제 없음")
+
+
+func _test_go_format_and_bgm() -> void:
+	_check(GameOverOverlay.format_amount(0) == "0" and GameOverOverlay.format_amount(999) == "999" and GameOverOverlay.format_amount(1000) == "1,000", "천 단위 쉼표 (0 / 999 / 1,000)")
+	_check(GameOverOverlay.format_amount(1234567) == "1,234,567" and GameOverOverlay.format_amount(-5000) == "-5,000", "천 단위 쉼표 (1,234,567 / -5,000)")
+	# BGM 일시정지·재개
+	var bgm: BgmPlayer = _make_bgm()
+	bgm.pause_music(0.5)
+	_check(not bgm.is_suspended() and _bgm_log(bgm) == "", "시작 전 pause_music은 아무것도 하지 않음")
+	bgm.start()
+	bgm.advance(1.2)
+	_check(_near(bgm.gain_of(BgmPlayer.TRACK_MAIN), 1.0), "준비: 메인 BGM이 최대 음량")
+	bgm.pause_music(0.5)
+	bgm.pause_music(0.5)
+	_check(bgm.is_suspended() and _bgm_log(bgm).count("pause") == 1, "pause_music은 한 번만 기록 (중복 호출 무시)")
+	bgm.advance(0.25)
+	var mid_gain: float = bgm.gain_of(BgmPlayer.TRACK_MAIN)
+	_check(mid_gain > 0.0 and mid_gain < 1.0 and not bgm.is_paused(BgmPlayer.TRACK_MAIN), "페이드 중에는 소리가 줄어드는 중")
+	bgm.advance(0.4)
+	var held_pos: float = bgm.position_of(BgmPlayer.TRACK_MAIN)
+	_check(_near(bgm.gain_of(BgmPlayer.TRACK_MAIN), 0.0) and bgm.is_paused(BgmPlayer.TRACK_MAIN), "페이드가 끝나면 음량 0 + 일시정지")
+	bgm.advance(5.0)
+	_check(_near(bgm.position_of(BgmPlayer.TRACK_MAIN), held_pos, 0.0001), "일시정지 동안 곡 위치가 그대로")
+	bgm.resume_music(0.5)
+	bgm.resume_music(0.5)
+	_check(not bgm.is_suspended() and _bgm_log(bgm).count("resume") == 1, "resume_music도 한 번만 기록")
+	bgm.advance(0.6)
+	_check(_near(bgm.gain_of(BgmPlayer.TRACK_MAIN), 1.0) and not bgm.is_paused(BgmPlayer.TRACK_MAIN), "재개하면 음량이 돌아오고 일시정지 해제")
+	_check(bgm.position_of(BgmPlayer.TRACK_MAIN) > held_pos and bgm.current_track() == BgmPlayer.TRACK_MAIN, "멈춘 자리부터 이어서 재생")
+	var before: int = bgm.requests().size()
+	bgm.resume_music(0.5)
+	_check(bgm.requests().size() == before, "멈춰 있지 않을 때 resume_music은 무시")
+	bgm.free()
+
+
+## 표시 시점: 정산 직후엔 안 뜨고, 연출이 끝난 뒤 지연 시간이 지나야 뜬다. 크레딧이 남으면 안 뜬다.
+func _test_go_timing(lose_seed: int, win_seed: int) -> void:
+	var main: Control = await _auto_main(lose_seed, GO_BET, GO_BET)
+	var overlay: GameOverOverlay = main.get_node("GameOverOverlay")
+	var delay: float = main.feel().gameover_delay_sec
+	_check(overlay != null and not overlay.visible and not main.game_over_open(), "처음에는 GAME OVER 화면이 없다(숨김)")
+	_go_run_spin(main)
+	_check(GameState.credit == 0 and GameState.is_game_over() and not GameState.spinning, "꽝 정산 직후: 로직은 이미 GAME OVER (크레딧 0)")
+	_check(not main.game_over_open(), "정산 직후에는 화면이 아직 안 뜸")
+	_advance_for(main, delay - 0.2)
+	_check(not main.game_over_open(), "지연 시간(%.1f초)이 지나기 전에는 안 뜸" % delay)
+	_advance_for(main, 0.4)
+	_check(main.game_over_open() and overlay.visible, "지연 시간이 지나면 GAME OVER 화면이 뜸")
+	main.free()
+	await get_tree().process_frame
+	# 정산 연출이 도는 동안에는 안 뜨고, 끝난 뒤 지연 시간을 센다
+	var shown: Control = await _auto_main(lose_seed, GO_BET, GO_BET)
+	_go_run_spin(shown)
+	shown.settle_show().start(100, 0, 1.0, 3, 0.45, 0.05, Vector2(100, 100), Vector2(200, 200))
+	_advance_for(shown, 1.2)
+	_check(shown.settle_active() and not shown.game_over_open(), "정산 연출이 도는 동안(지연 시간이 지나도) 화면이 안 뜸")
+	var frames: int = 0
+	while shown.settle_active() and frames < 600:
+		shown.advance(FRAME_DT)
+		frames += 1
+	_check(not shown.settle_active() and not shown.game_over_open(), "정산 연출이 끝난 직후에도 아직 안 뜸 (지연 시간은 연출이 끝난 뒤부터)")
+	_advance_for(shown, delay + 0.1)
+	_check(shown.game_over_open(), "정산 연출이 끝나고 지연 시간이 지나면 뜸")
+	shown.free()
+	await get_tree().process_frame
+	# 당첨으로 크레딧이 남으면 안 뜬다
+	var won: Control = await _auto_main(win_seed, GO_BET, GO_BET)
+	_go_run_spin(won)
+	_advance_for(won, delay + 1.0)
+	_check(GameState.credit > 0 and not GameState.is_game_over() and not won.game_over_open(), "당첨으로 크레딧이 남으면 안 뜸")
+	won.free()
+	await get_tree().process_frame
+	# 꽝이어도 크레딧이 남으면 안 뜬다
+	var kept_seed: int = _auto_find_seed(100, GO_BET, false)
+	var kept: Control = await _auto_main(kept_seed, 100, GO_BET)
+	_go_run_spin(kept)
+	_advance_for(kept, delay + 1.0)
+	_check(GameState.credit == 100 - GO_BET and not kept.game_over_open(), "꽝이어도 크레딧이 남으면 안 뜸")
+	kept.free()
+	await get_tree().process_frame
+	# 기다리는 동안 크레딧이 생기면(개발 빌드 COIN) 취소
+	var canceled: Control = await _auto_main(lose_seed, GO_BET, GO_BET)
+	_go_run_spin(canceled)
+	GameState.insert_coin()
+	_advance_for(canceled, delay + 1.0)
+	_check(not GameState.is_game_over() and not canceled.game_over_open(), "기다리는 중 크레딧이 생기면 화면 표시를 취소")
+	canceled.free()
+	await get_tree().process_frame
+
+
+## 화면 구성: 노드·크기·그림·버튼·글자·표시값·소리·BGM·기존 요소 위치
+func _test_go_screen(lose_seed: int) -> void:
+	var main: Control = await _auto_main(lose_seed, GO_BET, GO_BET)
+	var before: Array[Rect2] = _go_rows(main)
+	var pool_text: String = _box(main, "PoolBox").value_text()
+	_go_run_spin(main)
+	_advance_for(main, main.feel().gameover_delay_sec + 0.1)
+	var overlay: GameOverOverlay = main.get_node("GameOverOverlay")
+	var bank: SoundBank = main.sound_bank()
+	_check(main.game_over_open() and overlay.is_open(), "준비: GAME OVER 화면이 뜸")
+	var last_drawn: Node = null
+	for child: Node in main.get_children():
+		if child is CanvasItem:
+			last_drawn = child
+	_check(last_drawn == overlay, "GAME OVER 화면은 그려지는 노드 중 가장 위 (소리 노드는 그리기와 무관)")
+	_check(overlay.position == Vector2.ZERO and overlay.size == Vector2(640, 480) and overlay.mouse_filter == Control.MOUSE_FILTER_STOP, "화면 크기 640×480, 마우스 입력을 막음")
+	_check(overlay.background().size == Vector2(640, 414) and overlay.background().position == Vector2.ZERO, "배경 그림은 640×414 (하단 표시창 줄 위까지)")
+	_check(overlay.background().texture.resource_path.ends_with("gameover_bg.png") and overlay.banner().texture.resource_path.ends_with("gameover_banner.png"), "승인된 배경·배너 그림을 씀")
+	_check(overlay.banner().size == Vector2(456, 84) and overlay.banner().position == Vector2(90, 30), "배너 456×84, 위치 (90, 30)")
+	_check(overlay.content_bottom() <= GO_SCREEN_BOTTOM, "화면의 모든 그림·글자가 y 414 위에서 끝남 (하단 CREDIT/WIN/BET 줄은 보임)")
+	var continue_button: Button = overlay.get_node("ContinueButton")
+	var new_button: Button = overlay.get_node("NewGameButton")
+	_check(continue_button.position == Vector2(66, 252) and new_button.position == Vector2(333, 252) and continue_button.size == Vector2(240, 54) and new_button.size == Vector2(240, 54), "버튼 2개: (66,252) / (333,252), 240×54")
+	var continue_text: String = "+%s" % GameOverOverlay.format_amount(GameState.continue_credit)
+	var new_text: String = "+%s" % GameOverOverlay.format_amount(GameState.start_credit)
+	_check(overlay.button_texts(0) == PackedStringArray(["CONTINUE", continue_text]) and overlay.button_texts(1) == PackedStringArray(["NEW GAME", new_text]), "버튼 글자와 금액은 economy 값 (%s / %s)" % [continue_text, new_text])
+	_check(overlay.remaining_text() == "CONTINUE 남은 횟수  %d / %d" % [GameState.continue_max, GameState.continue_max], "남은 횟수 글자 3 / 3")
+	_check(overlay.selected() == GameOverOverlay.BUTTON_CONTINUE and not continue_button.disabled, "이어하기가 남았으면 CONTINUE가 선택되어 있고 활성")
+	_check(continue_button.get_theme_stylebox("normal").texture.resource_path.ends_with("button_on.png") and new_button.get_theme_stylebox("normal").texture.resource_path.ends_with("button_normal.png"), "선택된 버튼은 켜짐(금색) 그림, 아닌 버튼은 기본 그림")
+	_check(overlay.pool_text() == "POOL %s" % GameOverOverlay.format_amount(GameState.get_pool()), "POOL 표시 = 로직 값 (%s)" % overlay.pool_text())
+	_check(overlay.counts_text() == _fever(main).value_text(), "피버 카운터 표시가 오른쪽 패널(로직 값)과 같음")
+	_check(_sound_count(bank, SoundBank.NAME_GAMEOVER) == 1, "gameover 소리 요청이 한 번")
+	var bgm: BgmPlayer = main.bgm_player()
+	_check(bgm.is_suspended(), "BGM 일시정지 요청됨")
+	_advance_for(main, main.feel().bgm_gameover_fade_sec + 0.1)
+	_check(_near(bgm.gain_of(BgmPlayer.TRACK_MAIN), 0.0) and bgm.is_paused(BgmPlayer.TRACK_MAIN), "페이드 뒤 BGM 음량 0 + 일시정지")
+	_check(_go_rows(main) == before, "GAME OVER 화면이 떠 있어도 기존 요소(버튼·표시창·릴·패널) 좌표가 그대로")
+	_check(_box(main, "PoolBox").value_text() == str(GameState.get_pool()) and int(pool_text) <= GameState.get_pool(), "오른쪽 패널의 POOL은 로직 값 그대로 (마지막 판의 적립만 반영)")
+	main.free()
+	await get_tree().process_frame
+
+
+## GAME OVER 동안 모든 입력이 무효다 (개발 빌드: COIN 가능 상태에서)
+func _test_go_input_blocked(lose_seed: int) -> void:
+	GameState.dev_build = true
+	var main: Control = await _go_open_main(lose_seed)
+	var overlay: GameOverOverlay = main.get_node("GameOverOverlay")
+	var bank: SoundBank = main.sound_bank()
+	_check(GameState.coin_allowed() and main.game_over_open(), "준비: 개발 빌드(COIN 가능) + GAME OVER 화면")
+	_check(overlay.is_locked(), "뜬 직후에는 결정 입력이 잠겨 있음")
+	# 잠금 시간 동안 결정 키·클릭 무시
+	_press(main, KEY_SPACE)
+	_press(main, KEY_ENTER)
+	overlay.continue_button().pressed.emit()
+	overlay.new_game_button().pressed.emit()
+	_check(main.game_over_open() and GameState.is_game_over() and GameState.continues_left == GameState.continue_max and GameState.credit == 0, "잠금 시간 동안 스페이스·엔터·버튼 클릭이 무시됨")
+	_advance_for(main, main.feel().gameover_input_lock_sec + 0.1)
+	_check(not overlay.is_locked(), "잠금 시간이 지나면 풀림")
+	# ←/→ 선택, 마우스 가리키기
+	_press(main, KEY_RIGHT)
+	_check(overlay.selected() == GameOverOverlay.BUTTON_NEW_GAME, "→ : NEW GAME 선택")
+	_press(main, KEY_LEFT)
+	_check(overlay.selected() == GameOverOverlay.BUTTON_CONTINUE, "← : CONTINUE 선택")
+	_press(main, KEY_LEFT)
+	_check(overlay.selected() == GameOverOverlay.BUTTON_CONTINUE, "← 한 번 더: 끝에서 멈춤")
+	overlay.new_game_button().mouse_entered.emit()
+	_check(overlay.selected() == GameOverOverlay.BUTTON_NEW_GAME, "마우스를 NEW GAME에 올리면 선택")
+	overlay.select(GameOverOverlay.BUTTON_CONTINUE)
+	# 모든 입력이 무효
+	var coin_button: Button = main.get_node("CoinButton")
+	_check(coin_button.disabled, "GAME OVER 화면이 떠 있는 동안 COIN 버튼은 비활성(회색)")
+	var snapshot: Dictionary = _go_snapshot()
+	var requests: int = bank.requests().size()
+	for keycode: Key in [KEY_C, KEY_B, KEY_M, KEY_X, KEY_A, KEY_1, KEY_2, KEY_3, KEY_KP_1, KEY_KP_2, KEY_KP_3]:
+		_press(main, keycode)
+	_check(main.do_spin() == null, "START(do_spin)는 새 판을 시작하지 않음")
+	_check(not main.press_bet() and not main.press_max_bet() and not main.press_cancel(), "BET·MAX BET·CANCEL 함수 무효")
+	_check(not main.press_stop(0) and not main.press_stop(1) and not main.press_stop(2), "STOP 1~3 함수 무효")
+	main.press_coin()
+	main.press_auto()
+	for node_name: String in ["CoinButton", "BetButton", "MaxBetButton", "CancelButton", "StartButton", "AutoButton", "StopButton1", "StopButton2", "StopButton3"]:
+		(main.get_node(node_name) as Button).pressed.emit()
+	_check(_go_snapshot().hash() == snapshot.hash(), "C 키·COIN 버튼·BET·MAX BET·CANCEL·START·AUTO·STOP 1~3을 모두 눌러도 크레딧·베팅·AUTO·회전·이어하기 횟수가 그대로")
+	_check(main.game_over_open() and bank.requests().size() == requests, "화면은 그대로 열려 있고 소리도 나지 않음")
+	_check(GameState.is_game_over() and GameState.credit == 0, "화면이 떠 있는 동안 상태 일관: GAME OVER ⇔ 크레딧 0")
+	main.free()
+	await get_tree().process_frame
+
+
+## 화면과 로직이 어긋나지 않는다: 크레딧이 생기면 화면이 닫히고 BGM이 이어진다
+func _test_go_sync_with_logic(lose_seed: int) -> void:
+	GameState.dev_build = true
+	var main: Control = await _go_open_main(lose_seed)
+	var bgm: BgmPlayer = main.bgm_player()
+	_advance_for(main, main.feel().bgm_gameover_fade_sec + 0.1)
+	_check(main.game_over_open() and bgm.is_suspended(), "준비: GAME OVER 화면 + BGM 정지")
+	GameState.insert_coin()
+	_check(not GameState.is_game_over() and not main.game_over_open() and GameState.credit == GameState.coin_amount, "코드로 COIN을 넣어 크레딧이 생기면 GAME OVER 해제와 함께 화면도 닫힘")
+	_check(not bgm.is_suspended() and not (main.get_node("GameOverOverlay") as Control).visible, "BGM 재개 요청, 화면 숨김")
+	_advance_for(main, main.feel().bgm_gameover_fade_sec + 0.1)
+	_check(_near(bgm.gain_of(BgmPlayer.TRACK_MAIN), 1.0) and not bgm.is_paused(BgmPlayer.TRACK_MAIN), "BGM이 원래 음량으로 이어서 재생")
+	_check((main.get_node("CoinButton") as Button).disabled == (not GameState.coin_allowed()), "화면이 닫히면 COIN 버튼이 다시 활성")
+	main.free()
+	await get_tree().process_frame
+
+
+## CONTINUE 3번(상태 유지·횟수·BET 복구) → 4번째는 비활성 → NEW GAME(초기화·패널 다시 그림)
+func _test_go_continue_and_new_game(lose_seed: int) -> void:
+	GameState.dev_build = OS.is_debug_build()
+	var main: Control = await _go_open_main(lose_seed)
+	var overlay: GameOverOverlay = main.get_node("GameOverOverlay")
+	var bgm: BgmPlayer = main.bgm_player()
+	var bank: SoundBank = main.sound_bank()
+	var data: BalanceData = GameState.get_balance()
+	for n: int in GameState.continue_max:
+		_advance_for(main, main.feel().gameover_input_lock_sec + main.feel().bgm_gameover_fade_sec + 0.1)
+		_check(overlay.is_open() and overlay.selected() == GameOverOverlay.BUTTON_CONTINUE and overlay.remaining_text() == "CONTINUE 남은 횟수  %d / %d" % [GameState.continue_max - n, GameState.continue_max], "CONTINUE %d번째 전: 남은 횟수 %d / %d" % [n + 1, GameState.continue_max - n, GameState.continue_max])
+		var pool: String = _box(main, "PoolBox").value_text()
+		var counts: String = _fever(main).value_text()
+		var button_sounds: int = _sound_count(bank, SoundBank.NAME_BUTTON)
+		_press(main, KEY_ENTER)
+		_check(_sound_count(bank, SoundBank.NAME_BUTTON) == button_sounds + 1, "CONTINUE %d번째: 버튼 소리(button) 한 번" % [n + 1])
+		_check(not main.game_over_open() and not GameState.is_game_over() and GameState.continues_left == GameState.continue_max - n - 1, "CONTINUE %d번째: 화면 닫힘, GAME OVER 해제, 남은 횟수 %d" % [n + 1, GameState.continue_max - n - 1])
+		_check(GameState.credit == GameState.continue_credit and GameState.bet == mini(GO_BET, GameState.continue_credit) and _box(main, "BetBox").value_text() == str(GameState.bet) and _box(main, "CreditBox").value_text() == str(GameState.credit), "CONTINUE 뒤 크레딧 %d, BET 직전 값(최대 %d)으로 복구, 표시도 맞음" % [GameState.continue_credit, GO_BET])
+		_check(_box(main, "PoolBox").value_text() == pool and _fever(main).value_text() == counts, "CONTINUE 뒤 POOL·피버 카운터 표시 유지")
+		_check(not bgm.is_suspended(), "CONTINUE 뒤 BGM 재개")
+		_check(_go_drain(main), "다시 크레딧을 다 써서 GAME OVER 화면이 뜸 (%d번째)" % [n + 2])
+	# 이어하기를 다 썼다
+	_advance_for(main, main.feel().gameover_input_lock_sec + 0.1)
+	_check(GameState.continues_left == 0 and overlay.continue_button().disabled and overlay.selected() == GameOverOverlay.BUTTON_NEW_GAME, "이어하기 0회: CONTINUE 비활성, 선택은 NEW GAME")
+	_check(overlay.remaining_text() == "CONTINUE 남은 횟수  0 / %d" % GameState.continue_max and overlay.remaining_color() == GameOverOverlay.REMAIN_ZERO_COLOR, "남은 횟수 0 / 3, 글자 빨강")
+	_check(overlay.continue_button().get_theme_stylebox("disabled").texture.resource_path.ends_with("button_disabled.png"), "비활성 CONTINUE는 회색 버튼 그림")
+	_press(main, KEY_LEFT)
+	_press(main, KEY_RIGHT)
+	_check(overlay.selected() == GameOverOverlay.BUTTON_NEW_GAME, "←/→로도 비활성 CONTINUE는 선택되지 않음")
+	overlay.continue_button().pressed.emit()
+	overlay.continue_pressed.emit()
+	_check(main.game_over_open() and GameState.is_game_over() and GameState.credit == 0 and GameState.continues_left == 0, "비활성 CONTINUE 클릭은 무효 (화면·상태 그대로)")
+	_check(_sound_count(bank, SoundBank.NAME_BUTTON) == GameState.continue_max, "무효한 CONTINUE 클릭에는 버튼 소리가 나지 않음 (성공한 %d번만)" % GameState.continue_max)
+	# NEW GAME
+	_check(_sound_count(bank, SoundBank.NAME_GAMEOVER) == GameState.continue_max + 1, "GAME OVER 화면이 뜰 때마다 gameover 소리 (총 %d번)" % [GameState.continue_max + 1])
+	_press(main, KEY_ENTER)
+	_check(_sound_count(bank, SoundBank.NAME_BUTTON) == GameState.continue_max + 1, "NEW GAME: 버튼 소리(button) 한 번")
+	_check(not main.game_over_open() and not GameState.is_game_over(), "NEW GAME: 화면 닫힘, GAME OVER 해제")
+	_check(GameState.credit == GameState.start_credit and _box(main, "CreditBox").value_text() == str(GameState.start_credit), "NEW GAME: 크레딧 = 시작 크레딧, 표시도 맞음")
+	_check(GameState.get_pool() == data.pool_initial and _box(main, "PoolBox").value_text() == str(data.pool_initial), "NEW GAME: POOL 초기화, 오른쪽 패널이 다시 그려짐")
+	var rows: PackedStringArray = PackedStringArray()
+	for symbol: String in data.fever_symbols:
+		rows.append("%s ×%d" % [data.symbol_names[symbol], data.fever_initial_counts[symbol]])
+	_check(_fever(main).value_text() == "\n".join(rows), "NEW GAME: 피버 카운터 초기값으로 다시 그려짐")
+	_check(GameState.continues_left == GameState.continue_max and GameState.bet == 0 and _box(main, "BetBox").value_text() == "0" and _box(main, "WinBox").value_text() == "0", "NEW GAME: 이어하기 횟수 복구, BET 0, WIN 0")
+	_check(not bgm.is_suspended(), "NEW GAME 뒤 BGM 재개")
+	_check(GameState.raise_bet() and main.do_spin() != null, "NEW GAME 뒤 정상 플레이 (BET → START)")
+	main.free()
+	await get_tree().process_frame
+
+
+## COIN 비활성(coin_allowed가 false): 회색 버튼, C 키 무시, 안내 문구 3곳
+func _test_go_coin_disabled() -> void:
+	var main: Control = await _auto_main(1, 0, 0)
+	var bank: SoundBank = main.sound_bank()
+	var coin_button: Button = main.get_node("CoinButton")
+	var position_before: Vector2 = coin_button.position
+	var debug: DebugPanel = main.get_node("DebugPanel")
+	GameState.dev_build = true
+	GameState.refresh()
+	_check(GameState.coin_allowed() and not coin_button.disabled, "개발 빌드: COIN 버튼 활성")
+	_check(_notice(main).contains("COIN(C)") and debug.help_text().contains("C=COIN"), "개발 빌드: 안내 문구와 디버그 도움말에 COIN(C)")
+	GameState.raise_bet()
+	_check(_notice(main).contains("COIN(C)을 누르세요") and not _notice(main).contains("크레딧이 부족합니다."), "개발 빌드: 크레딧 거절 안내는 기존 COIN(C) 문구")
+	GameState.dev_build = false
+	GameState.refresh()
+	_check(not GameState.coin_allowed() and coin_button.disabled, "릴리즈 빌드(dev_build false): COIN 버튼 회색 비활성")
+	_check(coin_button.position == position_before, "COIN 버튼 위치는 그대로")
+	_check(_notice(main).contains("크레딧이 부족합니다.") and not _notice(main).contains("COIN(C)"), "릴리즈 빌드: 안내 문구가 '크레딧이 부족합니다.'")
+	GameState.raise_bet()
+	_check(_notice(main).contains("크레딧이 부족합니다.") and not _notice(main).contains("COIN(C)"), "릴리즈 빌드: 크레딧 거절 안내도 '크레딧이 부족합니다.'")
+	_check(not debug.help_text().contains("C=COIN") and debug.help_text().contains("COIN 사용 불가"), "릴리즈 빌드: 디버그 도움말에서 COIN 줄이 빠짐")
+	bank.clear_requests()
+	_press(main, KEY_C)
+	coin_button.pressed.emit()
+	main.press_coin()
+	_check(GameState.credit == 0 and _sound_count(bank, SoundBank.NAME_COIN) == 0 and not GameState.run_tainted, "COIN 불가: C 키·버튼이 크레딧을 바꾸지 않고 소리도 없음")
+	GameState.dev_build = true
+	GameState.refresh()
+	_press(main, KEY_C)
+	_check(GameState.credit == GameState.coin_amount and GameState.run_tainted and _sound_count(bank, SoundBank.NAME_COIN) == 1, "다시 개발 빌드: C 키로 COIN 지급 + 소리 + 테스트 판 표시")
 	main.free()
 	await get_tree().process_frame

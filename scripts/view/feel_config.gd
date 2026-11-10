@@ -45,6 +45,9 @@ const SPECS: Dictionary = {
 	"coin_count_big": [12.0, 1.0, 40.0],
 	"coin_fly_sec": [0.45, 0.05, 3.0],
 	"auto_effect_scale": [0.5, 0.1, 1.0],
+	"gameover_delay_sec": [0.8, 0.0, 5.0],
+	"gameover_input_lock_sec": [0.5, 0.0, 3.0],
+	"bgm_gameover_fade_sec": [0.5, 0.0, 5.0],
 }
 ## 정산 연출 크기 단계 (당첨 효과음 소/중/대와 같은 기준)
 const TIER_SMALL: int = 0
@@ -136,6 +139,12 @@ var coin_count_big: float = 12.0
 var coin_fly_sec: float = 0.45
 ## AUTO 중 정산 연출 시간에 곱하는 배율 (1이면 AUTO도 같은 속도)
 var auto_effect_scale: float = 0.5
+## GAME OVER(7-B): 크레딧이 0이 된 판의 연출이 모두 끝난 뒤 화면이 뜨기까지의 간격 (초)
+var gameover_delay_sec: float = 0.8
+## GAME OVER 화면이 뜬 직후 이 시간 동안은 결정 입력(스페이스·엔터·클릭)을 무시 (연타로 바로 눌리는 것 방지, 초)
+var gameover_input_lock_sec: float = 0.5
+## GAME OVER 동안 BGM을 줄여 멈추고, CONTINUE·NEW GAME 때 이어서 켜는 페이드 시간 (초)
+var bgm_gameover_fade_sec: float = 0.5
 ## 파일에서 읽다가 문제가 있어 기본값으로 대체한 항목 설명
 var errors: PackedStringArray = PackedStringArray()
 ## 파일을 읽고 JSON으로 해석하는 데 성공했는지 (항목별 범위 문제와는 별개)
