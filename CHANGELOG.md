@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## 0.19.0 — 2026-11-11 (7-C: 시작 화면)
+
+### 추가
+- 시작 화면 `scenes/title.tscn` + `TitleScreen`(`scripts/view/title_screen.gd`): 실행하면 이 화면이 먼저 나옴. 기존 벽지·프레임·전구(대기 패턴)·패널·버튼 재사용, 기존 `logo.png`를 정수 2배(360×144, Nearest)로 표시, START / EXIT 버튼, 깜빡이는 PRESS START, 하단 안내 문구. BGM 없음
+- 조작: Space·Enter = START, Esc = EXIT(확인 없이 바로 종료), 마우스 클릭. F1·F6 등 다른 키는 이 화면에서 무시. START·EXIT는 선택 강조 없이 같은 일반 버튼 모양
+- START: `GameState.new_game()`을 한 번만 부르고(시작 크레딧 3,000은 `grant_credit(start)` 경유, POOL·피버 카운터·이어하기 횟수 초기화), `button.wav`가 끝난 뒤 게임 화면(`main.tscn`)으로 전환. 소리 대기 중의 중복 입력(START·EXIT·키)은 모두 무시
+- `feel.json` 새 키 `title_blink_sec`(0.6, 범위 0.2~2.0): PRESS START 깜빡임 간격 (`docs/feel.md`)
+- 테스트: state_test +9, view_test +57 (시작 화면 노드·배치·로고 2배·깜빡임·START 한 번만·소리 대기·EXIT·키 무시·feel 키, main 단독 실행 시 GAME OVER 아님, 게임 화면 요소 위치 불변)
+
+### 변경
+- `project.godot`: 메인 씬 `main.tscn` → `title.tscn` (이 한 줄만)
+- `GameState._ready()`: `new_game()` 호출 제거. 게임을 켜면 크레딧 0으로 대기하고 시작 크레딧은 START가 줌. 기획서 5장·13장, 7-B 계획(`docs/plan.md`)의 옛 표현을 실제 구조로 고침
+- 로직(`SlotLogic`)·`balance.json`·`economy.json`·게임 화면 좌표·소리·연출 변경 없음
+
+### 알려진 문제
+- `main.tscn`만 F6으로 실행하면 크레딧 0으로 뜬다(COIN으로 충전, 개발 빌드). 의도된 동작
+- 게임 → 시작 화면으로 돌아가는 경로는 만들지 않음 (GAME OVER의 NEW GAME으로 충분)
+- 최고 기록·운영자 설정 진입·테스트 모드 스위치는 8단계
+
 ## 0.18.0 — 2026-11-11 (7-B: GAME OVER)
 
 ### 추가

@@ -112,7 +112,7 @@ user:// 저장 항목: 없음.
 
 ### 7-B-1 GameState 규칙 + state_test
 - `game_state.gd`: `grant_credit`, `credit_granted`, `continues_left`, `is_game_over()`, `can_continue()`, `continue_game()`, `new_game()`, `game_over` 시그널, `coin_allowed()`, 개발 빌드·테스트 모드 변수, 기록 집계(최고 크레딧·스핀 수·이어하기 사용 수·`run_tainted`)
-- `load_economy()` 검사 확장(새 키·범위). `_ready()`가 `initialize()` 뒤에 `new_game()` 호출. `initialize()`는 크레딧 0 유지(기존 테스트 호환)
+- `load_economy()` 검사 확장(새 키·범위). (7-B 당시 계획: 오토로드 `_ready()`가 `initialize()` 뒤에 `new_game()` 호출 → **7-C에서 이 호출을 제거**, 지금은 시작 화면 START가 `new_game()`을 부른다). `initialize()`는 크레딧 0 유지(기존 테스트 호환)
 - `insert_coin()`이 `coin_allowed()`와 `grant_credit`을 거침
 - state_test 추가: CONTINUE 3번 제한·4번째 거절, CONTINUE 뒤 POOL·피버·BET 복구, NEW GAME 초기화 항목 전부, 정산 순간 0 판정·회전 중 0 무판정·당첨 시 무판정, AUTO 중 0의 시그널 순서, grant_credit 이유별 동작·테스트 판 표시, COIN 활성 조건(개발/릴리즈 × 스위치), 범위 밖 economy 값 거절
 - 확인: logic 64 / state 96+ / reel 71 / view 483 / match 18 이상. **view_test 1136~1140행 위험은 이 단계에서 먼저 돌려 보고, 깨지면 고치지 않고 원인부터 보고**

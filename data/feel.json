@@ -42,5 +42,6 @@
 	"auto_effect_scale": 0.5,
 	"gameover_delay_sec": 0.8,
 	"gameover_input_lock_sec": 0.5,
-	"bgm_gameover_fade_sec": 0.5
+	"bgm_gameover_fade_sec": 0.5,
+	"title_blink_sec": 0.6
 }

@@ -66,6 +66,7 @@ func _ready() -> void:
 	await _test_auto_view()
 	await _test_settle_show()
 	await _test_game_over_view()
+	await _test_title_screen()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -2526,3 +2527,192 @@ func _test_go_coin_disabled() -> void:
 	_check(GameState.credit == GameState.coin_amount and GameState.run_tainted and _sound_count(bank, SoundBank.NAME_COIN) == 1, "다시 개발 빌드: C 키로 COIN 지급 + 소리 + 테스트 판 표시")
 	main.free()
 	await get_tree().process_frame
+
+
+# ---------------------------------------------------------------- 7-C 시작 화면
+
+const TITLE_SCENE_PATH: String = "res://scenes/title.tscn"
+const MAIN_SCENE_FILE: String = "res://scenes/main.tscn"
+
+
+## 시작 화면 인스턴스를 만든다 (씬 전환·종료는 직접 하지 않고 시그널만 받는다).
+func _make_title() -> TitleScreen:
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+	var title: TitleScreen = (load(TITLE_SCENE_PATH) as PackedScene).instantiate() as TitleScreen
+	title.auto_connect = false
+	add_child(title)
+	title.set_process(false)
+	return title
+
+
+func _key(target: Node, keycode: Key) -> void:
+	var event: InputEventKey = InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = true
+	target._unhandled_key_input(event)
+
+
+func _test_title_screen() -> void:
+	await _test_title_entry()
+	await _test_title_layout()
+	await _test_title_animation()
+	await _test_title_start()
+	await _test_title_exit_and_keys()
+	_test_title_feel_key()
+
+
+## 메인 씬 설정, main 단독 실행(F6), 게임 화면 요소 위치 불변
+func _test_title_entry() -> void:
+	_check(ProjectSettings.get_setting("application/run/main_scene") == TITLE_SCENE_PATH, "프로젝트 메인 씬 = title.tscn")
+	_check(ResourceLoader.exists(MAIN_SCENE_FILE) and TitleScreen.MAIN_SCENE_PATH == MAIN_SCENE_FILE, "START 뒤에 갈 게임 씬(main.tscn)이 있음")
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+	var solo: Control = (load(MAIN_SCENE_FILE) as PackedScene).instantiate()
+	solo.settle_presentation = false
+	add_child(solo)
+	solo.set_process(false)
+	await get_tree().process_frame
+	_check(GameState.credit == 0 and not GameState.is_game_over() and not solo.game_over_overlay().is_open(), "initialize 직후 main은 GAME OVER 아님 (크레딧 0, 오버레이 닫힘)")
+	var start_button: Button = solo.get_node("StartButton")
+	_check(start_button.position == Vector2(189, 360) and start_button.size == Vector2(81, 36), "게임 화면 START 버튼 위치·크기 불변")
+	var title_panel: Panel = solo.get_node("Title")
+	_check(title_panel.position == Vector2(450, 9) and title_panel.size == Vector2(180, 72), "게임 화면 오른쪽 위 로고 칸 위치·크기 불변")
+	_check(solo.get_node("Title/TitleLogo") != null and solo.get_node("FrameBulbs") != null, "게임 화면 로고·전구 노드 그대로")
+	solo.free()
+	await get_tree().process_frame
+
+
+func _test_title_layout() -> void:
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	for node_name: String in ["Background", "Wallpaper", "Frame", "FrameBulbs", "MainPanel", "BottomPanel", "Logo", "StartButton", "ExitButton", "PressLabel", "HintLabel", "SoundBank"]:
+		_check(title.get_node_or_null(node_name) != null, "시작 화면 노드 있음: %s" % node_name)
+	var logo: TextureRect = title.logo()
+	_check(logo.texture.resource_path.ends_with("assets/ui/logo.png") and logo.texture.get_size() == Vector2(180, 72), "로고는 기존 logo.png(180×72)")
+	_check(logo.size == Vector2(360, 144) and logo.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST, "로고는 정수 2배(360×144) + Nearest")
+	_check(logo.position == Vector2(140, 30) and logo.position == logo.position.floor(), "로고 위치 (140, 30) 정수 좌표 (미리보기와 같음)")
+	var start: Button = title.start_button()
+	var exit: Button = title.exit_button()
+	_check(start.text == "START" and exit.text == "EXIT", "버튼 글자 START / EXIT")
+	_check(start.position == Vector2(240, 222) and exit.position == Vector2(240, 276) and start.size == Vector2(160, 36) and exit.size == Vector2(160, 36), "START·EXIT 위치·크기 (미리보기와 같음)")
+	_check(start.focus_mode == Control.FOCUS_NONE and exit.focus_mode == Control.FOCUS_NONE, "버튼은 포커스를 받지 않음 (스페이스·엔터 이중 처리 방지)")
+	var same_look: bool = start.get_theme_stylebox("normal") == exit.get_theme_stylebox("normal") and start.get_theme_color("font_color") == exit.get_theme_color("font_color")
+	_check(same_look and not start.has_theme_stylebox_override("normal") and not exit.has_theme_stylebox_override("normal"), "START·EXIT는 선택 강조 없이 같은 일반 버튼 모양")
+	_check(title.press_label().text == "PRESS START" and (title.get_node("HintLabel") as Label).text == "SPACE / ENTER  시작     ESC  종료", "PRESS START·안내 문구")
+	var panel: Panel = title.get_node("MainPanel")
+	_check(panel.position == Vector2(57, 9) and panel.size == Vector2(526, 345), "큰 패널 위치·크기")
+	var bottom: Panel = title.get_node("BottomPanel")
+	_check(bottom.position == Vector2(57, 414) and bottom.size == Vector2(526, 57), "하단 패널 위치·크기")
+	_check(title.sound_bank() != null and AudioServer.get_bus_index(SoundBank.BUS_SFX) != -1, "효과음 뱅크와 SFX 버스 준비")
+	var has_bgm: bool = false
+	for child: Node in title.get_children():
+		has_bgm = has_bgm or child is BgmPlayer
+	_check(not has_bgm, "시작 화면 BGM은 무음 (BgmPlayer 없음)")
+	title.free()
+	await get_tree().process_frame
+
+
+func _test_title_animation() -> void:
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var feel: FeelConfig = FeelConfig.load_from_file()
+	var bulbs: FrameBulbs = title.frame_bulbs()
+	_check(bulbs.mode() == BulbPattern.Mode.IDLE and bulbs.socket_count() == 18, "전구는 기존 대기(IDLE) 패턴, 소켓 18개")
+	var before: int = bulbs.bulb_state(0)
+	title.advance(feel.bulb_idle_sec)
+	_check(bulbs.bulb_state(0) != before, "전구 대기 패턴이 시간에 따라 번갈아 켜짐")
+	_check(title.press_label().visible == title.blink_visible(), "PRESS START 표시 = 깜빡임 상태")
+	var fresh: TitleScreen = _make_title()
+	await get_tree().process_frame
+	_check(fresh.blink_visible() and fresh.press_label().visible, "처음엔 PRESS START가 보임")
+	fresh.advance(feel.title_blink_sec)
+	_check(not fresh.blink_visible() and not fresh.press_label().visible, "title_blink_sec 뒤에 꺼짐")
+	fresh.advance(feel.title_blink_sec)
+	_check(fresh.blink_visible() and fresh.press_label().visible, "다시 title_blink_sec 뒤에 켜짐")
+	fresh.free()
+	title.free()
+	await get_tree().process_frame
+
+
+func _test_title_start() -> void:
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var events: Array[String] = []
+	var on_new_game: Callable = func() -> void: events.append("new_game")
+	var on_granted: Callable = func(amount: int, reason: StringName) -> void: events.append("granted %d %s" % [amount, reason])
+	GameState.new_game_started.connect(on_new_game)
+	GameState.credit_granted.connect(on_granted)
+	title.start_requested.connect(func() -> void: events.append("requested"))
+	title.start_finished.connect(func() -> void: events.append("finished"))
+	var bank: SoundBank = title.sound_bank()
+	bank.clear_requests()
+	_check(GameState.credit == 0 and not GameState.is_game_over(), "START 전: 크레딧 0")
+	_key(title, KEY_ENTER)
+	var data: BalanceData = GameState.get_balance()
+	_check(title.is_starting() and GameState.credit == GameState.start_credit, "ENTER: new_game() 실행 → 시작 크레딧 지급")
+	_check(GameState.get_pool() == data.pool_initial and GameState.get_fever_counts().hash() == data.fever_initial_counts.hash(), "START: POOL·피버 카운터 초기값")
+	_check(GameState.continues_left == GameState.continue_max and not GameState.run_tainted and GameState.bet == 0, "START: 이어하기 횟수 복구·테스트 판 표시 없음·베팅 0")
+	_check(events == ["new_game", "granted %d start" % GameState.start_credit, "requested"], "START 순서: new_game_started → 시작 지급(start) → requested (%s)" % [events])
+	_check(_sound_count(bank, SoundBank.NAME_BUTTON) == 1, "START: button.wav 한 번")
+	# 소리가 끝나기 전의 중복 입력은 모두 무시
+	_key(title, KEY_SPACE)
+	_key(title, KEY_KP_ENTER)
+	title.start_button().pressed.emit()
+	title.exit_button().pressed.emit()
+	_key(title, KEY_ESCAPE)
+	var duplicate_start: bool = title.press_start()
+	var duplicate_exit: bool = title.press_exit()
+	_check(not duplicate_start and not duplicate_exit, "소리 대기 중 START·EXIT 재입력은 거절")
+	var granted_count: int = events.filter(func(e: String) -> bool: return e.begins_with("granted")).size()
+	_check(granted_count == 1 and events.count("new_game") == 1 and GameState.credit == GameState.start_credit, "중복 입력해도 new_game()은 한 번 (시작 크레딧 한 번만)")
+	_check(_sound_count(bank, SoundBank.NAME_BUTTON) == 1 and events.count("requested") == 1, "중복 입력해도 소리·요청은 한 번")
+	# 소리 길이만큼 기다린 뒤에만 게임 화면으로 넘어간다
+	var length: float = (load(SoundBank.sound_path(SoundBank.NAME_BUTTON)) as AudioStream).get_length()
+	title.advance(maxf(0.0, length - 0.05))
+	_check(events.count("finished") == 0, "button.wav가 끝나기 전에는 전환하지 않음 (소리가 잘리지 않음)")
+	title.advance(0.1)
+	_check(events.count("finished") == 1, "button.wav가 끝나면 전환 신호 한 번")
+	title.advance(5.0)
+	_check(events.count("finished") == 1, "전환 신호는 한 번만")
+	GameState.new_game_started.disconnect(on_new_game)
+	GameState.credit_granted.disconnect(on_granted)
+	title.free()
+	await get_tree().process_frame
+	# START 뒤 COIN은 coin_allowed() 규칙 그대로
+	var dev_before: bool = GameState.dev_build
+	GameState.dev_build = false
+	GameState.insert_coin()
+	_check(not GameState.coin_allowed() and GameState.credit == GameState.start_credit, "START 뒤 릴리즈 빌드: COIN 불가")
+	GameState.dev_build = dev_before
+
+
+func _test_title_exit_and_keys() -> void:
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var exits: Array[int] = [0]
+	title.exit_requested.connect(func() -> void: exits[0] += 1)
+	var starts: Array[int] = [0]
+	title.start_requested.connect(func() -> void: starts[0] += 1)
+	# 개발용·게임용 키는 이 화면에서 무시
+	for keycode: Key in [KEY_F1, KEY_F6, KEY_C, KEY_B, KEY_M, KEY_X, KEY_A, KEY_1, KEY_LEFT, KEY_RIGHT]:
+		_key(title, keycode)
+	_check(starts[0] == 0 and exits[0] == 0 and GameState.credit == 0 and not title.is_starting(), "F1·F6·C·B 등 다른 키는 무시 (시작도 종료도 안 됨)")
+	_key(title, KEY_ESCAPE)
+	_check(exits[0] == 1 and GameState.credit == 0 and not title.is_starting(), "ESC = 확인 없이 바로 EXIT 요청 (크레딧·상태 불변)")
+	title.exit_button().pressed.emit()
+	_check(exits[0] == 2, "EXIT 버튼 클릭도 종료 요청")
+	_check(starts[0] == 0, "EXIT는 START를 부르지 않음")
+	title.free()
+	await get_tree().process_frame
+
+
+func _test_title_feel_key() -> void:
+	var defaults: FeelConfig = FeelConfig.from_dict({})
+	_check(defaults.title_blink_sec == 0.6, "feel 새 키 title_blink_sec 기본값 0.6")
+	var low: FeelConfig = FeelConfig.from_dict({ "title_blink_sec": 0.1 })
+	var high: FeelConfig = FeelConfig.from_dict({ "title_blink_sec": 2.5 })
+	_check(low.title_blink_sec == 0.6 and high.title_blink_sec == 0.6, "범위 밖 값(0.2 미만 / 2 초과)은 기본값으로 대체")
+	var edge: FeelConfig = FeelConfig.from_dict({ "title_blink_sec": 0.2 })
+	var edge_high: FeelConfig = FeelConfig.from_dict({ "title_blink_sec": 2.0 })
+	_check(edge.title_blink_sec == 0.2 and edge_high.title_blink_sec == 2.0, "경계값 0.2 / 2.0은 그대로")
+	var real: FeelConfig = FeelConfig.load_from_file()
+	_check(real.errors.is_empty() and real.title_blink_sec == 0.6, "data/feel.json의 title_blink_sec = 0.6, 문제 없음")

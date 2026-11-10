@@ -45,6 +45,7 @@ func _ready() -> void:
 	_test_continue()
 	_test_continue_keeps_run()
 	_test_new_game()
+	_test_title_start()
 	for state: Node in _auto_states:
 		state.free()
 	_auto_states.clear()
@@ -838,3 +839,36 @@ func _test_new_game() -> void:
 	_check(not busy.new_game() and busy.credit == credit and busy.spinning, "회전 중 NEW GAME은 거절·상태 불변")
 	busy.settle_spin()
 	busy.free()
+
+
+## 7-C: 오토로드는 크레딧 0으로 대기하고, 시작 화면의 START(= new_game())가 시작 크레딧을 준다.
+func _test_title_start() -> void:
+	# 게임을 켠 직후(오토로드 _ready)에는 크레딧 0, 시작 지급 없음
+	var booted: Node = load(GAME_STATE_SCRIPT).new()
+	var boot_grants: Array[StringName] = []
+	booted.connect("credit_granted", func(_amount: int, reason: StringName) -> void: boot_grants.append(reason))
+	add_child(booted)
+	_check(booted.ready_ok and booted.credit == 0 and not booted.is_game_over() and booted.bet == 0, "시작 직후: 크레딧 0, GAME OVER 아님, 베팅 0")
+	_check(boot_grants.is_empty() and not booted.run_tainted and booted.continues_left == booted.continue_max, "시작 직후: 지급 없음(시작 크레딧은 START가 준다)")
+	# START = new_game(): grant_credit(start) 경유로 시작 크레딧 한 번, POOL·카운터·이어하기 초기값
+	var grants: Array[String] = []
+	booted.connect("credit_granted", func(amount: int, reason: StringName) -> void: grants.append("%d %s" % [amount, reason]))
+	_check(booted.new_game(), "START(new_game) 성공")
+	_check(booted.credit == booted.start_credit and grants == ["%d start" % booted.start_credit], "START: 시작 크레딧이 grant_credit(start)로 한 번만 지급 (%s)" % [grants])
+	_check(booted.get_pool() == _data.pool_initial and booted.get_fever_counts().hash() == _data.fever_initial_counts.hash() and booted.continues_left == booted.continue_max, "START: POOL·피버 카운터·이어하기 횟수 초기값")
+	_check(not booted.run_tainted and booted.bet == 0 and booted.last_win == 0 and not booted.is_game_over(), "START: 테스트 판 표시 없음·베팅 0·WIN 0")
+	# START 뒤 COIN은 coin_allowed() 그대로: 릴리즈 빌드와 테스트 모드 꺼짐에서는 비활성
+	booted.dev_build = false
+	var credit: int = booted.credit
+	var coin_events: Array[int] = []
+	booted.connect("coin_inserted", func(amount: int) -> void: coin_events.append(amount))
+	booted.insert_coin()
+	_check(not booted.coin_allowed() and booted.credit == credit and coin_events.is_empty() and not booted.run_tainted, "START 뒤 릴리즈 빌드(dev_build false): COIN 불가, 크레딧·테스트 판 표시 불변")
+	booted.dev_build = true
+	booted.test_mode = false
+	booted.insert_coin()
+	_check(not booted.coin_allowed() and booted.credit == credit, "START 뒤 테스트 모드 꺼짐: COIN 불가")
+	booted.test_mode = true
+	booted.insert_coin()
+	_check(booted.coin_allowed() and booted.credit == credit + booted.coin_amount and booted.run_tainted, "START 뒤 개발 빌드+테스트 모드: COIN 지급, 테스트 판 표시")
+	booted.free()

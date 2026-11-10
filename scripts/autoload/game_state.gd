@@ -95,9 +95,8 @@ func _ready() -> void:
 	if data == null or economy.is_empty():
 		push_error("GameState: 데이터 로드 실패")
 		return
+	# 크레딧 0으로 대기한다. 시작 크레딧은 시작 화면(title.tscn)의 START가 new_game()을 불러 준다.
 	initialize(data, economy, int(Time.get_ticks_usec()))
-	# 게임을 켜면 시작 크레딧을 준다. 7-C의 시작 화면이 생기면 START가 이 호출을 대신한다.
-	new_game()
 
 
 ## economy.json을 읽어 검사한다. 문제가 있으면 빈 사전을 돌려주고 에러를 출력한다.
