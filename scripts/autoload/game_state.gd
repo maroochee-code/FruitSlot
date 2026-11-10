@@ -19,6 +19,10 @@ signal spin_started(result: SpinResult)
 signal spin_finished(result: SpinResult, lowered_from: int)
 ## 동작이 거절됨. reason은 REASON_* 중 하나
 signal action_rejected(reason: StringName)
+## AUTO가 켜지거나 꺼지거나, 켠 뒤 시작한 판 수(count)가 바뀜
+signal auto_changed(enabled: bool, count: int)
+## AUTO가 꺼진 이유 (AutoSpin.REASON_*). auto_changed 다음에 온다.
+signal auto_stopped(reason: StringName)
 
 var credit: int = 0
 var bet: int = 0
@@ -30,7 +34,22 @@ var ready_ok: bool = false
 ## 릴이 도는 중(START ~ 정산 전). 이 동안 COIN/BET/MAX BET/CANCEL/START는 거절된다.
 var spinning: bool = false
 
+## AUTO가 켜져 있는가 (읽기 전용으로만 쓴다. 켜고 끄기는 toggle_auto / start_auto / stop_auto)
+var auto_on: bool:
+	get:
+		return _auto.enabled
+
+## AUTO 대기시간(초). 화면이 feel.json의 auto_spin_gap_sec를 스핀 시작 때 넘겨 준다.
+var auto_gap_sec: float:
+	get:
+		return _auto.gap_sec
+	set(value):
+		_auto.gap_sec = value
+
 var _data: BalanceData
+## 정산 도중 AUTO가 꺼졌을 때, auto_stopped를 spin_finished 다음에 보내기 위해 이유를 잠시 들고 있는다.
+var _deferred_stop_reason: StringName = &""
+var _auto: AutoSpin = AutoSpin.new()
 var _logic: SlotLogic
 ## START에서 확정됐지만 아직 정산하지 않은 결과
 var _pending: SpinResult
@@ -65,6 +84,10 @@ static func load_economy(path: String = ECONOMY_PATH) -> Dictionary:
 func initialize(data: BalanceData, economy: Dictionary, rng_seed: int) -> void:
 	_data = data
 	_logic = SlotLogic.new(data, rng_seed)
+	var gap: float = _auto.gap_sec
+	_auto = AutoSpin.new()
+	_auto.gap_sec = gap
+	_auto.stop_on_win_at = data.auto_stop_on_win_at
 	coin_amount = int(economy["coin_amount"])
 	credit = int(economy["start_credit"])
 	bet = 0
@@ -96,7 +119,7 @@ func get_fever_counts() -> Dictionary[String, int]:
 
 ## BET 버튼이 의미 있는지 (크레딧이 있고, 올릴 수 있거나 최대에서 1로 돌아갈 수 있음)
 func can_raise_bet() -> bool:
-	if spinning or credit < 1:
+	if spinning or auto_on or credit < 1:
 		return false
 	return bet >= _data.max_total_bet or bet + 1 <= credit
 
@@ -108,11 +131,11 @@ func max_bet_target() -> int:
 
 ## MAX BET이 의미 있는지 (크레딧이 있고, 이미 목표값이 아님)
 func can_max_bet() -> bool:
-	return not spinning and credit >= 1 and bet != max_bet_target()
+	return not spinning and not auto_on and credit >= 1 and bet != max_bet_target()
 
 
 func can_cancel_bet() -> bool:
-	return not spinning and bet >= 1
+	return not spinning and not auto_on and bet >= 1
 
 
 func can_start() -> bool:
@@ -129,7 +152,7 @@ func insert_coin() -> void:
 
 ## BET +1. 최대에서 한 번 더 누르면 1로 돌아간다. 새 베팅이 크레딧을 넘으면 거절한다.
 func raise_bet() -> bool:
-	if spinning:
+	if spinning or auto_on:
 		return false
 	if credit < 1:
 		action_rejected.emit(REASON_NO_CREDIT)
@@ -146,7 +169,7 @@ func raise_bet() -> bool:
 
 ## MAX BET. 베팅을 min(최대 베팅, 현재 크레딧)으로 한 번에 맞춘다. 라인 배분은 BET과 같다.
 func max_bet() -> bool:
-	if spinning:
+	if spinning or auto_on:
 		return false
 	if credit < 1:
 		action_rejected.emit(REASON_NO_CREDIT)
@@ -160,7 +183,7 @@ func max_bet() -> bool:
 
 ## CANCEL. 베팅을 0으로 되돌린다. 크레딧은 START 때 차감되므로 변하지 않는다.
 func cancel_bet() -> bool:
-	if spinning or bet < 1:
+	if spinning or auto_on or bet < 1:
 		return false
 	_set_bet(0)
 	return true
@@ -202,8 +225,13 @@ func settle_spin() -> SpinResult:
 	credit += result.total_payout()
 	credit_changed.emit(credit)
 	_set_win(result.total_payout())
+	_judge_auto_after_settle(result)
 	var lowered_from: int = _lower_bet_to_credit()
 	spin_finished.emit(result, lowered_from)
+	if _deferred_stop_reason != &"":
+		var reason: StringName = _deferred_stop_reason
+		_deferred_stop_reason = &""
+		auto_stopped.emit(reason)
 	return result
 
 
@@ -213,6 +241,88 @@ func play_spin() -> SpinResult:
 	if result == null:
 		return null
 	return settle_spin()
+
+
+## AUTO 켜기/끄기. 켤 수 없는 상태(베팅 없음, 크레딧 부족)면 거절 시그널만 보낸다.
+func toggle_auto() -> void:
+	if auto_on:
+		stop_auto(AutoSpin.REASON_USER)
+	else:
+		start_auto()
+
+
+## AUTO를 켤 수 있는가: 켜져 있으면 언제든 끌 수 있고, 꺼져 있으면 베팅이 1 이상이고
+## (쉬는 중이면) 크레딧 이내일 때만 켠다. 회전 중에는 정산 때 크레딧을 다시 따진다.
+func can_toggle_auto() -> bool:
+	if auto_on:
+		return true
+	if spinning:
+		return bet >= 1
+	return can_start()
+
+
+## 지금 AUTO가 센 판 수 (AUTO를 켠 뒤 시작한 판)
+func auto_count() -> int:
+	return _auto.spin_count
+
+
+## AUTO를 켠다. 쉬는 중이면 바로 첫 판을 시작하고, 회전 중이면 정산 뒤 대기시간 후부터 이어진다.
+func start_auto() -> bool:
+	if auto_on:
+		return false
+	if not can_toggle_auto():
+		action_rejected.emit(REASON_NO_CREDIT if credit < 1 else REASON_NO_BET if bet < 1 else REASON_NO_CREDIT)
+		return false
+	_auto.turn_on()
+	auto_changed.emit(true, _auto.spin_count)
+	if not spinning:
+		_auto_start_spin()
+	return true
+
+
+## AUTO를 끈다. 진행 중인 판은 끊지 않고 그대로 정산되며, 다음 판만 시작하지 않는다.
+## defer_notice: 정산 도중에 끄는 경우 true (auto_stopped를 spin_finished 뒤로 미룬다)
+func stop_auto(reason: StringName, defer_notice: bool = false) -> void:
+	if not auto_on:
+		return
+	_auto.turn_off()
+	auto_changed.emit(false, _auto.spin_count)
+	if defer_notice:
+		_deferred_stop_reason = reason
+	else:
+		auto_stopped.emit(reason)
+
+
+## 화면이 매 프레임 부른다. AUTO 대기시간이 끝나면 다음 판을 시작한다. (회전 중에는 아무것도 하지 않는다.)
+func auto_advance(delta: float) -> void:
+	if spinning or not _auto.advance(delta):
+		return
+	if bet < 1 or bet > credit:
+		stop_auto(AutoSpin.REASON_NO_CREDIT)
+		return
+	_auto_start_spin()
+
+
+## AUTO가 켜진 채 정산됐을 때: 큰 당첨이면 끄고, 크레딧이 베팅보다 적으면 끄고, 아니면 대기시간을 시작한다.
+## 베팅 자동 하향보다 먼저 판단한다 (AUTO가 베팅을 몰래 바꾸지 않도록).
+func _judge_auto_after_settle(result: SpinResult) -> void:
+	if not auto_on:
+		return
+	if _auto.is_big_win(result.total_payout()):
+		stop_auto(AutoSpin.REASON_BIG_WIN, true)
+	elif credit < bet:
+		stop_auto(AutoSpin.REASON_NO_CREDIT, true)
+	else:
+		_auto.begin_gap()
+
+
+## AUTO가 새 판을 시작한다. 판 수를 먼저 올려서 spin_started를 받은 화면이 "AUTO N회"를 바로 맞게 보여 준다.
+func _auto_start_spin() -> void:
+	_auto.spin_count += 1
+	auto_changed.emit(true, _auto.spin_count)
+	if start_spin() == null:
+		_auto.spin_count -= 1
+		stop_auto(AutoSpin.REASON_NO_CREDIT)
 
 
 ## 크레딧이 베팅보다 적으면 베팅을 크레딧만큼 낮춘다. 낮췄으면 직전 베팅, 아니면 0.

@@ -13,6 +13,14 @@ const REEL_ORIGIN: Vector2 = Vector2(54, 48)
 ## STOP 버튼은 칸 아래(보드 아래끝 312 밑)에서 칸 가운데에 맞춘다.
 const STOP_SLOT_Y: float = 318.0
 const STOP_SLOT_SIZE: Vector2 = Vector2(96, 33)
+## AUTO 토글 버튼: STOP 3과 오른쪽 패널 사이 (아트 x=128, y=106, 20×11)
+const AUTO_RECT: Rect2 = Rect2(384, 318, 60, 33)
+## AUTO 해제 이유 → 일회성 안내 문구
+const AUTO_STOP_NOTICES: Dictionary = {
+	AutoSpin.REASON_USER: "AUTO를 해제했습니다. 진행 중인 판까지만 진행합니다.",
+	AutoSpin.REASON_NO_CREDIT: "크레딧이 부족해 AUTO를 해제했습니다.",
+	AutoSpin.REASON_BIG_WIN: "큰 당첨! AUTO를 해제했습니다.",
+}
 ## 하단 버튼 줄: 어두운 띠 위에 CANCEL / COIN / START / BET / MAX BET (6-C, 640×480 기준)
 const BUTTON_STRIP_RECT: Rect2 = Rect2(6, 354, 444, 48)
 const BUTTON_STRIP_COLOR: Color = Color("0e1130")
@@ -98,6 +106,7 @@ var _bet_button: Button
 var _max_bet_button: Button
 var _cancel_button: Button
 var _start_button: Button
+var _auto_button: Button
 
 
 func _ready() -> void:
@@ -182,6 +191,7 @@ func advance(delta: float) -> void:
 		_settle_left -= delta
 		if _settle_left <= 0.0:
 			_settle_now()
+	GameState.auto_advance(delta)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -197,6 +207,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			GameState.max_bet()
 		KEY_X:
 			GameState.cancel_bet()
+		KEY_A:
+			GameState.toggle_auto()
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
 			do_spin()
 		KEY_1, KEY_KP_1:
@@ -222,11 +234,17 @@ func do_spin() -> SpinResult:
 		if _spin.press_quick_stop():
 			_refresh_buttons()
 		return null
+	# AUTO 대기 중의 START는 "AUTO 끄기" (새 판을 시작하지 않는다)
+	if GameState.auto_on:
+		GameState.stop_auto(AutoSpin.REASON_USER)
+		return null
 	return GameState.start_spin()
 
 
 ## STOP 1/2/3 (index 0~2). 받아들여지면 true.
 func press_stop(index: int) -> bool:
+	if GameState.auto_on:
+		return false
 	var accepted: bool = _spin.press_stop(index)
 	_refresh_buttons()
 	return accepted
@@ -305,6 +323,8 @@ func _connect_state() -> void:
 	GameState.win_changed.connect(_on_win_changed)
 	GameState.coin_inserted.connect(_on_coin_inserted)
 	GameState.action_rejected.connect(_on_action_rejected)
+	GameState.auto_changed.connect(_on_auto_changed)
+	GameState.auto_stopped.connect(_on_auto_stopped)
 	GameState.spin_started.connect(_on_spin_started)
 	GameState.spin_finished.connect(_on_spin_finished)
 	_spin.reel_started.connect(_on_reel_started)
@@ -331,6 +351,21 @@ func _on_win_changed(win: int) -> void:
 	_win_box.set_value(str(win))
 
 
+func _on_auto_changed(_enabled: bool, _count: int) -> void:
+	_apply_auto_skin()
+	_refresh_buttons()
+	_refresh_notice()
+
+
+## AUTO가 꺼진 이유를 일회성 문구로 보여 준다. 정산 때 꺼진 경우는 결과 문구 뒤에 붙는다 (GameState가 spin_finished 다음에 알려 준다).
+func _on_auto_stopped(reason: StringName) -> void:
+	var note: String = AUTO_STOP_NOTICES.get(reason, "")
+	if note.is_empty():
+		return
+	_notice_override = note if _notice_override.is_empty() else _notice_override + "\n" + note
+	_refresh_notice()
+
+
 func _on_coin_inserted(_amount: int) -> void:
 	_notice_override = ""
 
@@ -354,6 +389,7 @@ func _on_spin_started(result: SpinResult) -> void:
 	_settling = false
 	# 새 손맛 설정은 여기서만 받아들인다. 이 스핀은 끝까지 이 설정 한 벌로 움직인다.
 	_feel = _latest_feel
+	GameState.auto_gap_sec = _feel.auto_spin_gap_sec
 	_spin.begin(result.stops, _feel)
 	_refresh_buttons()
 	_refresh_notice()
@@ -450,17 +486,21 @@ func _build_result_notice(result: SpinResult, lowered_from: int) -> String:
 ## 안내 문구: (일회성 안내 또는 상태 안내) + BET 8 미만이면 피버 안내
 func _refresh_notice() -> void:
 	var lines: PackedStringArray = PackedStringArray()
+	# AUTO 중에는 첫 줄에 "AUTO N회"를 고정한다
+	if GameState.auto_on:
+		lines.append("AUTO %d회" % GameState.auto_count())
 	if not _notice_override.is_empty():
 		lines.append(_notice_override)
 	elif _fever_overlay.is_playing():
 		lines.append("피버 발동! 스페이스로 연출을 건너뛸 수 있습니다.")
 	elif GameState.spinning:
-		lines.append("STOP 1·2·3 또는 START로 릴을 멈추세요.")
+		if not GameState.auto_on:
+			lines.append("STOP 1·2·3 또는 START로 릴을 멈추세요.")
 	elif GameState.credit < 1:
 		lines.append("COIN(C)으로 크레딧을 넣으세요.")
 	elif GameState.bet < 1:
 		lines.append("BET(B)으로 베팅하세요.")
-	if GameState.bet < _data.fever_min_total_bet:
+	if GameState.bet < _data.fever_min_total_bet and not GameState.auto_on:
 		lines.append("BET %d 이상이면 피버 적립" % _data.fever_min_total_bet)
 	_notice_box.set_value("\n".join(lines))
 
@@ -473,7 +513,8 @@ func _refresh_buttons() -> void:
 	# 피버 연출 중에는 START(스페이스)가 "연출 건너뛰기"라서 켠다.
 	_start_button.disabled = not (GameState.can_start() or _spin.can_quick_stop() or _fever_overlay.is_playing())
 	for i: int in _stop_buttons.size():
-		_stop_buttons[i].disabled = not _spin.can_stop(i)
+		_stop_buttons[i].disabled = not _spin.can_stop(i) or GameState.auto_on
+	_auto_button.disabled = not GameState.can_toggle_auto()
 
 
 ## 오른쪽 패널: POOL 숫자(색 단계)와 피버 카운터. 스핀 결과의 스냅샷을 받아 정지 후에만 갱신한다.
@@ -551,6 +592,8 @@ func _build_stop_buttons() -> void:
 		var button: Button = _make_button("StopButton%d" % (col + 1), "STOP %d" % (col + 1), Rect2(Vector2(x, STOP_SLOT_Y), STOP_SLOT_SIZE))
 		button.pressed.connect(press_stop.bind(col))
 		_stop_buttons.append(button)
+	_auto_button = _make_button("AutoButton", "AUTO", AUTO_RECT)
+	_auto_button.pressed.connect(GameState.toggle_auto)
 
 
 func _build_info_boxes() -> void:
@@ -598,6 +641,22 @@ func _build_buttons() -> void:
 
 func _make_row_button(node_name: String, text: String, slot: int) -> Button:
 	return _make_button(node_name, text, Rect2(Vector2(BUTTON_XS[slot], BUTTON_Y), BUTTON_SIZE))
+
+
+## AUTO가 켜지면 버튼을 ON 그림(밝은 금색 면, 어두운 글자)으로, 꺼지면 기본 스킨으로 되돌린다.
+func _apply_auto_skin() -> void:
+	var on_states: PackedStringArray = PackedStringArray(["normal", "hover"])
+	var color_keys: PackedStringArray = PackedStringArray(["font_color", "font_hover_color"])
+	for state: String in on_states:
+		if GameState.auto_on:
+			_auto_button.add_theme_stylebox_override(state, UiSkin.button_box("on"))
+		else:
+			_auto_button.remove_theme_stylebox_override(state)
+	for key: String in color_keys:
+		if GameState.auto_on:
+			_auto_button.add_theme_color_override(key, UiSkin.BUTTON_ON_TEXT_COLOR)
+		else:
+			_auto_button.remove_theme_color_override(key)
 
 
 func _make_button(node_name: String, text: String, rect: Rect2) -> Button:

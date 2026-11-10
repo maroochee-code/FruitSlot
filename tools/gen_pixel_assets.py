@@ -7,6 +7,7 @@
   assets/ui/icons/*.png       작은 아이콘 12x10 (BAR만 15x10)
   assets/ui/panel.png         패널 9-slice (6-C, 최종 크기 24x24 = 아트 8x8 x3, 모서리 6px)
   assets/ui/button_normal.png / button_pressed.png / button_disabled.png   버튼 3상태 9-slice (같은 규격)
+  assets/ui/button_on.png     AUTO 켜짐 표시용 (같은 규격)
   assets/ui/line_label_a.png ~ _h.png   라인 라벨 33x21 (아트 11x7 x3)
   assets/_preview/sheet.png   위 전부를 x3 Nearest로 확대해 한 장에 (6-C 에셋은 이미 3배라 그대로 붙임)
 규칙: 안티앨리어싱·그라데이션 없음(색은 팔레트 몇 가지만), 1px 외곽선, 왼쪽 위 밝게/오른쪽 아래 어둡게 2톤, 하이라이트 점.
@@ -365,6 +366,7 @@ BUTTON_STATES = {
     "normal": (rgb("3d4fb8"), rgb("7f8fee"), rgb("27338a")),
     "pressed": (rgb("2e3d96"), rgb("27338a"), rgb("7f8fee")),  # 베벨 반전
     "disabled": (rgb("2a2f5a"), rgb("3a4070"), rgb("1a1d3a")),
+    "on": (rgb("e0a82e"), rgb("ffe38a"), rgb("a06a14")),  # AUTO 켜짐 (글자는 어두운 색)
 }
 LINE_COLORS = {
     "a": "ff5a5a", "b": "4fc3f7", "c": "ffd23a", "d": "4cd964",
@@ -474,7 +476,7 @@ def main():
     d2 = ImageDraw.Draw(full)
     d2.text((pad, base_h), "6-C UI (final size: panel / button normal, pressed, disabled / line labels A-H)", fill=(255, 255, 255, 255))
     x = pad
-    for n in ["panel", "button_normal", "button_pressed", "button_disabled"]:
+    for n in ["panel", "button_normal", "button_pressed", "button_disabled", "button_on"]:
         full.alpha_composite(ui_final[n], (x, base_h + 20))
         x += ui_final[n].width + pad
     x = pad

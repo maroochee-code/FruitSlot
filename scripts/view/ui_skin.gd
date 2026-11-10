@@ -9,6 +9,7 @@ const BUTTON_PATHS: Dictionary = {
 	"normal": UI_DIR + "button_normal.png",
 	"pressed": UI_DIR + "button_pressed.png",
 	"disabled": UI_DIR + "button_disabled.png",
+	"on": UI_DIR + "button_on.png",
 }
 const LINE_LABEL_PATH: String = UI_DIR + "line_label_%s.png"
 const LINE_LETTERS: String = "abcdefgh"
@@ -18,6 +19,8 @@ const PRESSED_TEXT_SHIFT: int = 3
 const DEFAULT_FONT_MULTIPLE: int = 1
 const BUTTON_TEXT_COLOR: Color = Color("ffffff")
 const BUTTON_DISABLED_TEXT_COLOR: Color = Color("6b7099")
+## 켜진(ON) 버튼은 밝은 면이라 글자를 어두운 색으로
+const BUTTON_ON_TEXT_COLOR: Color = Color("2b1b3d")
 ## 라벨(작은 제목) 글자색
 const LABEL_TEXT_COLOR: Color = Color("9aa0c8")
 const TEXT_COLOR: Color = Color("ffffff")
@@ -28,7 +31,7 @@ static func panel_box() -> StyleBoxTexture:
 	return _nine_box(PANEL_PATH)
 
 
-## 버튼 상태("normal" / "pressed" / "disabled")의 바탕. 눌린 상태는 글자 위치가 3px 내려가도록 안쪽 여백을 바꾼다.
+## 버튼 상태("normal" / "pressed" / "disabled" / "on")의 바탕. 눌린 상태는 글자 위치가 3px 내려가도록 안쪽 여백을 바꾼다.
 static func button_box(state: String) -> StyleBoxTexture:
 	var box: StyleBoxTexture = _nine_box(BUTTON_PATHS[state])
 	if state == "pressed":

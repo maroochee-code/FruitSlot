@@ -13,6 +13,8 @@ var paytable: Dictionary[String, int] = {}
 var reels: Array[PackedStringArray] = []
 var lines: Array[LineDef] = []
 var max_total_bet: int = 0
+## AUTO: 한 판 WIN이 이 값 이상이면 AUTO를 끈다. 0이면 사용 안 함 (balance.json의 auto_spin.stop_on_win_at)
+var auto_stop_on_win_at: int = 0
 
 var fever_min_total_bet: int = 0
 ## 피버 대상 심볼 (balance.json 순서 유지)
@@ -75,6 +77,7 @@ func _parse(raw: Dictionary) -> void:
 	_parse_lines(raw.get("lines", []))
 	var bet: Dictionary = raw.get("bet", {})
 	max_total_bet = int(bet.get("max_total", 0))
+	auto_stop_on_win_at = int(raw.get("auto_spin", {}).get("stop_on_win_at", 0))
 	_parse_fever(raw.get("fever", {}))
 	_parse_pool(raw.get("pool", {}))
 
@@ -138,6 +141,8 @@ func _validate() -> void:
 	_validate_reels()
 	_validate_lines()
 	_validate_fever_and_pool()
+	if auto_stop_on_win_at < 0:
+		errors.append("auto_spin.stop_on_win_at(%d)은 0 이상이어야 함 (0 = 사용 안 함)" % auto_stop_on_win_at)
 	if max_total_bet < line_count():
 		errors.append("bet.max_total(%d)은 라인 수(%d) 이상이어야 함" % [max_total_bet, line_count()])
 

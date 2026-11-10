@@ -17,6 +17,7 @@ const SPECS: Dictionary = {
 	"quick_stop_interval": [0.15, 0.0, 5.0],
 	"start_lock_sec": [0.3, 0.0, 5.0],
 	"result_delay": [0.25, 0.0, 5.0],
+	"auto_spin_gap_sec": [0.5, 0.0, 10.0],
 	"fever_overlay_sec": [2.0, 0.2, 10.0],
 	"fever_step_gap": [0.3, 0.0, 5.0],
 	"fever_skip_lock_sec": [0.4, 0.0, 5.0],
@@ -59,6 +60,8 @@ var quick_stop_interval: float = 0.15
 var start_lock_sec: float = 0.3
 ## 마지막 릴이 멈춘 뒤 정산·당첨 연출까지의 간격 (초)
 var result_delay: float = 0.25
+## AUTO: 한 판이 정산된 뒤 다음 판을 자동으로 시작하기까지의 대기시간 (초)
+var auto_spin_gap_sec: float = 0.5
 ## 피버 오버레이: 심볼 하나를 보여 주는 시간 (초)
 var fever_overlay_sec: float = 2.0
 ## 피버 오버레이: 심볼과 심볼 사이 빈 간격 (초)

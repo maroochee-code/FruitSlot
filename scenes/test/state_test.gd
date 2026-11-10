@@ -9,6 +9,8 @@ var _passed: int = 0
 var _failed: int = 0
 var _data: BalanceData
 var _rejects: Array[StringName] = []
+## AUTO 테스트가 만든 GameState들 (판이 진행 중인 채 끝나면 종료 때 누수 경고가 나서 끝날 때 해제한다)
+var _auto_states: Array[Node] = []
 
 
 func _ready() -> void:
@@ -26,6 +28,17 @@ func _ready() -> void:
 	_test_spin_lock()
 	_test_bet_lowered_when_credit_short()
 	_test_bet_zero_when_broke()
+	_test_auto_continues()
+	_test_auto_blocks_bet_buttons()
+	_test_auto_toggle_rules()
+	_test_auto_off_finishes_current_spin()
+	_test_auto_on_during_spin()
+	_test_auto_stops_when_credit_short()
+	_test_auto_stop_on_win()
+	_test_auto_same_results_as_manual()
+	for state: Node in _auto_states:
+		state.free()
+	_auto_states.clear()
 	print("==================== STATE TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -61,6 +74,33 @@ func _ints(values: PackedInt32Array) -> Array[int]:
 func _bet_up_to(state: Node, target: int) -> void:
 	while state.bet != target:
 		state.raise_bet()
+
+
+# ---------------------------------------------------------------- AUTO 도우미
+
+## 크레딧을 넉넉히 넣고 베팅을 맞춘 새 상태. AUTO 대기시간은 0.5초로 고정한다.
+func _auto_state(rng_seed: int, total_bet: int = 8, coins: int = 40) -> Node:
+	var state: Node = _fresh(rng_seed)
+	for i: int in coins:
+		state.insert_coin()
+	_bet_up_to(state, total_bet)
+	state.auto_gap_sec = 0.5
+	_auto_states.append(state)
+	return state
+
+
+## 이 시드로 첫 판을 돌렸을 때 총 당첨금 (같은 조건의 다른 인스턴스로 미리 확인)
+func _first_payout(rng_seed: int, total_bet: int, coins: int) -> int:
+	var probe: Node = _auto_state(rng_seed, total_bet, coins)
+	return probe.play_spin().total_payout()
+
+
+## 첫 판 당첨금이 조건을 만족하는 시드를 찾는다 (없으면 -1)
+func _find_seed(total_bet: int, coins: int, want_win: bool) -> int:
+	for candidate: int in range(1, 400):
+		if (_first_payout(candidate, total_bet, coins) > 0) == want_win:
+			return candidate
+	return -1
 
 
 # ---------------------------------------------------------------- 테스트
@@ -320,3 +360,172 @@ func _test_spin_lock() -> void:
 	state.settle_spin()
 	_check(state.can_cancel_bet(), "정산 뒤에는 다시 조작 가능")
 	state.free()
+
+
+# ---------------------------------------------------------------- AUTO 테스트
+
+func _test_auto_continues() -> void:
+	var state: Node = _auto_state(5)
+	_check(state.start_auto() and state.auto_on, "AUTO ON: 켜짐")
+	_check(state.spinning and state.auto_count() == 1, "AUTO ON: 쉬는 중이면 바로 첫 판 시작 (1회)")
+	state.settle_spin()
+	_check(not state.spinning and state.auto_on, "정산 뒤에도 AUTO는 켜져 있음")
+	state.auto_advance(0.4)
+	_check(not state.spinning, "대기시간(0.5초)이 지나기 전에는 다음 판이 시작되지 않음")
+	state.auto_advance(0.2)
+	_check(state.spinning and state.auto_count() == 2, "대기시간이 지나면 다음 판이 자동 시작 (2회)")
+	state.auto_advance(5.0)
+	_check(state.auto_count() == 2, "회전 중에는 대기시간이 흘러도 새 판이 시작되지 않음")
+	var bets: Array[int] = []
+	for i: int in 4:
+		state.settle_spin()
+		bets.append(state.bet)
+		state.auto_advance(0.5)
+	_check(bets == [8, 8, 8, 8] and state.bet == 8, "AUTO 중 BET 값 유지")
+	_check(state.auto_count() == 6, "AUTO 켠 뒤 시작한 판 수 세기")
+	var fast: Node = _auto_state(5)
+	fast.auto_gap_sec = 0.0
+	fast.start_auto()
+	fast.settle_spin()
+	fast.auto_advance(0.0)
+	_check(fast.spinning, "대기시간 0이면 정산 직후 곧바로 다음 판")
+
+
+func _test_auto_blocks_bet_buttons() -> void:
+	var state: Node = _auto_state(6, 8)
+	state.start_auto()
+	state.settle_spin()
+	var credit_before: int = state.credit
+	_check(not state.can_raise_bet() and not state.can_max_bet() and not state.can_cancel_bet(), "AUTO 중 BET / MAX BET / CANCEL 비활성")
+	_check(not state.raise_bet() and not state.max_bet() and not state.cancel_bet(), "AUTO 중 BET / MAX BET / CANCEL 무시")
+	_check(state.bet == 8 and state.credit == credit_before, "무시된 입력은 베팅·크레딧을 바꾸지 않음")
+	state.insert_coin()
+	_check(state.credit == credit_before + state.coin_amount, "AUTO 중에도 COIN은 허용")
+	state.stop_auto(AutoSpin.REASON_USER)
+	_check(state.can_raise_bet() and state.can_cancel_bet(), "AUTO를 끄면 BET / CANCEL이 다시 활성")
+
+
+func _test_auto_toggle_rules() -> void:
+	var state: Node = _fresh(7)
+	_auto_states.append(state)
+	_check(not state.can_toggle_auto(), "베팅이 없으면 AUTO를 켤 수 없음")
+	state.toggle_auto()
+	_check(not state.auto_on and _rejects.size() == 1, "베팅 없이 AUTO를 켜면 거절")
+	state.insert_coin()
+	state.raise_bet()
+	_check(state.can_toggle_auto(), "베팅이 있으면 AUTO를 켤 수 있음")
+	var events: Array[String] = []
+	state.connect("auto_changed", func(enabled: bool, count: int) -> void: events.append("changed %s %d" % [enabled, count]))
+	state.connect("auto_stopped", func(reason: StringName) -> void: events.append("stopped %s" % reason))
+	state.toggle_auto()
+	_check(state.auto_on, "toggle_auto로 켜짐")
+	state.settle_spin()
+	state.toggle_auto()
+	_check(not state.auto_on, "toggle_auto로 다시 끔")
+	_check(events == ["changed true 0", "changed true 1", "changed false 1", "stopped user"], "시그널: 켜짐 → 첫 판(1회) → 꺼짐 → 이유(user): %s" % [events])
+
+
+func _test_auto_off_finishes_current_spin() -> void:
+	var state: Node = _auto_state(8)
+	var finished: Array[int] = []
+	state.connect("spin_finished", func(_result: SpinResult, _lowered: int) -> void: finished.append(1))
+	state.start_auto()
+	_check(state.spinning, "AUTO 첫 판 진행 중")
+	state.stop_auto(AutoSpin.REASON_USER)
+	_check(state.spinning and not state.auto_on, "AUTO를 꺼도 진행 중인 판은 끊기지 않음")
+	var credit_before: int = state.credit
+	var result: SpinResult = state.settle_spin()
+	_check(result != null and finished.size() == 1 and state.credit == credit_before + result.total_payout(), "끈 뒤에도 진행 중인 판은 정상 정산됨")
+	state.auto_advance(10.0)
+	_check(not state.spinning and state.auto_count() == 1, "끈 뒤에는 다음 판이 시작되지 않음")
+	var waiting: Node = _auto_state(8)
+	waiting.start_auto()
+	waiting.settle_spin()
+	waiting.stop_auto(AutoSpin.REASON_USER)
+	waiting.auto_advance(10.0)
+	_check(not waiting.spinning and waiting.auto_count() == 1, "대기시간 중에 끄면 다음 판이 시작되지 않음")
+
+
+func _test_auto_on_during_spin() -> void:
+	var state: Node = _auto_state(9)
+	state.start_spin()
+	_check(state.can_toggle_auto(), "회전 중에도 AUTO를 켤 수 있음")
+	state.start_auto()
+	_check(state.auto_on and state.auto_count() == 0 and state.spinning, "회전 중에 켜면 이 판은 세지 않고 계속 진행")
+	state.settle_spin()
+	state.auto_advance(0.5)
+	_check(state.spinning and state.auto_count() == 1, "정산 뒤 대기시간이 지나면 이어서 시작 (1회)")
+
+
+func _test_auto_stops_when_credit_short() -> void:
+	# 크레딧 100, 베팅 64: 당첨이 없으면 정산 뒤 크레딧(36)이 베팅보다 적다
+	var lose_seed: int = _find_seed(64, 1, false)
+	_check(lose_seed > 0, "(준비) 베팅 64 첫 판이 꽝인 시드를 찾음")
+	var state: Node = _auto_state(lose_seed, 64, 1)
+	var events: Array[String] = []
+	state.connect("spin_finished", func(_result: SpinResult, lowered: int) -> void: events.append("finished %d" % lowered))
+	state.connect("auto_stopped", func(reason: StringName) -> void: events.append("stopped %s" % reason))
+	state.start_auto()
+	state.settle_spin()
+	_check(not state.auto_on, "크레딧이 총 BET보다 적으면 AUTO 자동 OFF")
+	_check(events == ["finished 64", "stopped no_credit"], "정산(spin_finished) 다음에 해제 이유(no_credit)가 옴: %s" % [events])
+	_check(state.bet == state.credit, "AUTO가 꺼진 뒤 기존 규칙대로 베팅이 크레딧만큼 낮아짐")
+	state.auto_advance(10.0)
+	_check(not state.spinning, "꺼진 뒤에는 다음 판이 시작되지 않음")
+
+
+func _test_auto_stop_on_win() -> void:
+	var win_seed: int = _find_seed(8, 40, true)
+	var lose_seed: int = _find_seed(8, 40, false)
+	_check(win_seed > 0 and lose_seed > 0, "(준비) 첫 판이 당첨인 시드와 꽝인 시드를 찾음")
+	var original: int = _data.auto_stop_on_win_at
+	_data.auto_stop_on_win_at = 0
+	var off: Node = _auto_state(win_seed)
+	off.start_auto()
+	off.settle_spin()
+	_check(off.auto_on, "stop_on_win_at = 0 이면 당첨이 있어도 AUTO 계속")
+	_data.auto_stop_on_win_at = 1
+	var stopped_reasons: Array[StringName] = []
+	var on: Node = _auto_state(win_seed)
+	on.connect("auto_stopped", func(reason: StringName) -> void: stopped_reasons.append(reason))
+	on.start_auto()
+	var win: int = on.settle_spin().total_payout()
+	_check(win >= 1 and not on.auto_on and stopped_reasons == [AutoSpin.REASON_BIG_WIN], "stop_on_win_at = 1: 당첨(%d)이면 AUTO OFF (이유 big_win)" % win)
+	var quiet: Node = _auto_state(lose_seed)
+	quiet.start_auto()
+	quiet.settle_spin()
+	_check(quiet.auto_on, "당첨이 없으면(꽝) 기준 1이어도 AUTO 계속")
+	_data.auto_stop_on_win_at = win + 1
+	var above: Node = _auto_state(win_seed)
+	above.start_auto()
+	above.settle_spin()
+	_check(above.auto_on, "당첨금이 기준 미만이면 AUTO 계속")
+	_data.auto_stop_on_win_at = win
+	var equal: Node = _auto_state(win_seed)
+	equal.start_auto()
+	equal.settle_spin()
+	_check(not equal.auto_on, "당첨금이 기준과 같으면(이상) AUTO OFF")
+	_data.auto_stop_on_win_at = original
+
+
+## AUTO를 켜도 결과(RNG)는 켜지 않았을 때와 같은 시드에서 같다
+func _test_auto_same_results_as_manual() -> void:
+	var spins: int = 12
+	var manual: Node = _auto_state(31)
+	var manual_stops: Array = []
+	var manual_payouts: Array[int] = []
+	for i: int in spins:
+		var result: SpinResult = manual.play_spin()
+		manual_stops.append(_ints(result.stops))
+		manual_payouts.append(result.total_payout())
+	var auto: Node = _auto_state(31)
+	var auto_stops: Array = []
+	var auto_payouts: Array[int] = []
+	auto.connect("spin_started", func(result: SpinResult) -> void: auto_stops.append(_ints(result.stops)))
+	auto.start_auto()
+	for i: int in spins:
+		auto_payouts.append(auto.settle_spin().total_payout())
+		auto.auto_advance(0.5)
+	auto.stop_auto(AutoSpin.REASON_USER)
+	auto_stops.resize(spins)
+	_check(auto_stops == manual_stops and auto_payouts == manual_payouts, "같은 시드에서 AUTO 결과 = 수동 결과 (정지 위치·당첨금 %d판)" % spins)

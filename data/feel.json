@@ -12,6 +12,7 @@
 	"quick_stop_interval": 0.15,
 	"start_lock_sec": 0.3,
 	"result_delay": 0.25,
+	"auto_spin_gap_sec": 0.5,
 	"fever_overlay_sec": 2.0,
 	"fever_step_gap": 0.3,
 	"fever_skip_lock_sec": 0.4,

@@ -57,6 +57,7 @@ func _ready() -> void:
 	main.free()
 	await get_tree().process_frame
 	await _test_fever_show()
+	await _test_auto_view()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -1091,3 +1092,191 @@ func _fever_lock_errors(main: Control, expected_credit: int) -> int:
 		if not (main.get_node(node_name) as Button).disabled:
 			errors += 1
 	return errors
+
+
+# ---------------------------------------------------------------- AUTO (화면)
+
+const AUTO_GAP_SEC: float = 0.5
+
+
+## AUTO 시험용으로 오토로드를 새로 시작하고 main 씬을 띄운다. credit/bet은 호출한 쪽이 정한다.
+func _auto_main(rng_seed: int, credit: int, total_bet: int) -> Control:
+	GameState.initialize(GameState.get_balance(), GameState.load_economy(), rng_seed)
+	GameState.credit = credit
+	while GameState.bet != total_bet:
+		GameState.raise_bet()
+	var main: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	add_child(main)
+	main.set_process(false)
+	await get_tree().process_frame
+	GameState.refresh()
+	return main
+
+
+func _notice(main: Control) -> String:
+	return _box(main, "NoticeBox").value_text()
+
+
+func _advance_for(main: Control, seconds: float) -> void:
+	var time: float = 0.0
+	while time < seconds:
+		main.advance(FRAME_DT)
+		time += FRAME_DT
+
+
+## 첫 판 당첨금이 0인지/아닌지가 want_win인 시드를 찾는다 (오토로드로 한 판 돌려 본다)
+func _auto_find_seed(credit: int, total_bet: int, want_win: bool) -> int:
+	for candidate: int in range(1, 400):
+		GameState.initialize(GameState.get_balance(), GameState.load_economy(), candidate)
+		GameState.credit = credit
+		while GameState.bet != total_bet:
+			GameState.raise_bet()
+		if (GameState.play_spin().total_payout() > 0) == want_win:
+			return candidate
+	return -1
+
+
+func _test_auto_view() -> void:
+	await _test_auto_button_and_flow()
+	await _test_auto_stop_paths()
+	await _test_auto_notice_and_stops()
+	await _test_auto_with_fever()
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+
+
+func _test_auto_button_and_flow() -> void:
+	var main: Control = await _auto_main(21, 0, 0)
+	var button: Button = main.get_node("AutoButton")
+	_check(button.position == Vector2(384, 318) and button.size == Vector2(60, 33) and button.text == "AUTO", "AUTO 버튼: (384,318) 60×33, 글자 AUTO")
+	var stop3: Button = main.get_node("StopButton3")
+	_check(button.position.x >= stop3.position.x + stop3.size.x and button.position.x + button.size.x <= main.PAYTABLE_RECT.position.x, "AUTO 버튼이 STOP 3과 오른쪽 패널 사이에 있음")
+	_check(button.disabled, "베팅이 없으면 AUTO 버튼 비활성")
+	_check(button.get_theme_stylebox("normal").texture.resource_path.ends_with("button_normal.png"), "AUTO 꺼짐: 기본 버튼 그림")
+	GameState.insert_coin()
+	GameState.insert_coin()
+	GameState.raise_bet()
+	main._refresh_buttons()
+	_check(not button.disabled, "베팅이 있으면 AUTO 버튼 활성")
+	_press(main, KEY_A)
+	_check(GameState.auto_on and GameState.spinning, "A 키: AUTO 켜짐, 첫 판 시작")
+	_check(button.get_theme_stylebox("normal").texture.resource_path.ends_with("button_on.png") and button.get_theme_stylebox("hover").texture.resource_path.ends_with("button_on.png"), "AUTO 켜짐: ON 그림(밝은 금색 면)")
+	_check(button.get_theme_color("font_color") == UiSkin.BUTTON_ON_TEXT_COLOR, "AUTO 켜짐: 어두운 글자색")
+	_check(_notice(main).split("\n")[0] == "AUTO 1회", "메시지 첫 줄 'AUTO 1회'")
+	_check(GameState.auto_gap_sec == main.feel().auto_spin_gap_sec, "스핀 시작 때 feel.json의 auto_spin_gap_sec를 로직에 넘김")
+	var locked: bool = (main.get_node("BetButton") as Button).disabled and (main.get_node("MaxBetButton") as Button).disabled and (main.get_node("CancelButton") as Button).disabled
+	_check(locked, "AUTO 중 BET / MAX BET / CANCEL 버튼 비활성")
+	_advance_for(main, 0.6)
+	var stops_locked: bool = true
+	for i: int in 3:
+		stops_locked = stops_locked and (main.get_node("StopButton%d" % (i + 1)) as Button).disabled and not main.press_stop(i)
+	_check(stops_locked, "AUTO 중 STOP 1~3 비활성·입력 무시 (회전 중에도)")
+	var bet_before: int = GameState.bet
+	_press(main, KEY_B)
+	_press(main, KEY_M)
+	_press(main, KEY_X)
+	_check(GameState.bet == bet_before, "AUTO 중 B / M / X 키 무시")
+	_settle(main)
+	_check(not GameState.spinning and GameState.auto_on, "한 판이 정산되고 AUTO는 유지")
+	_check(_notice(main).split("\n")[0] == "AUTO 1회", "정산 뒤 대기 중에도 'AUTO 1회' 첫 줄")
+	_advance_for(main, AUTO_GAP_SEC - 0.1)
+	_check(not GameState.spinning, "대기시간 전에는 다음 판이 시작되지 않음")
+	_advance_for(main, 0.2)
+	_check(GameState.spinning and GameState.auto_count() == 2 and _notice(main).split("\n")[0] == "AUTO 2회", "대기시간 뒤 다음 판 자동 시작 ('AUTO 2회')")
+	_check(GameState.bet == bet_before, "AUTO 중 BET 값 유지")
+	main.free()
+	await get_tree().process_frame
+
+
+func _test_auto_stop_paths() -> void:
+	# 버튼으로 끄기: 회전 중에 끄면 진행 중인 판까지만 돌고 멈춘다
+	var main: Control = await _auto_main(22, 400, FULL_BET)
+	var button: Button = main.get_node("AutoButton")
+	button.pressed.emit()
+	_advance_for(main, 0.5)
+	button.pressed.emit()
+	_check(not GameState.auto_on and GameState.spinning, "AUTO 버튼 재클릭: 꺼지지만 진행 중인 판은 계속")
+	_check(button.get_theme_stylebox("normal").texture.resource_path.ends_with("button_normal.png") and _notice(main).contains("AUTO를 해제"), "꺼짐 표시로 돌아가고 해제 문구가 나옴")
+	_settle(main)
+	_advance_for(main, 2.0)
+	_check(not GameState.spinning and GameState.auto_count() == 1, "끈 뒤 진행 중이던 판은 정산되고 새 판은 시작되지 않음")
+	_check(not (main.get_node("BetButton") as Button).disabled, "AUTO를 끄면 BET 버튼이 다시 활성")
+	# START로 끄기: 대기시간 중의 START는 AUTO 끄기 (새 판을 시작하지 않는다)
+	GameState.start_auto()
+	_settle(main)
+	var started_before: int = GameState.auto_count()
+	_check(GameState.auto_on and not GameState.spinning, "(준비) AUTO 대기 상태")
+	var result: SpinResult = main.do_spin()
+	_check(result == null and not GameState.auto_on and not GameState.spinning, "대기 중 START: AUTO만 꺼지고 새 판은 시작하지 않음")
+	_advance_for(main, 2.0)
+	_check(not GameState.spinning and GameState.auto_count() == started_before, "START로 끈 뒤 새 판이 시작되지 않음")
+	_check(_notice(main).contains("AUTO를 해제"), "START로 끄면 해제 문구")
+	# 회전 중 START는 기존대로 남은 릴을 멈추고 AUTO는 유지
+	GameState.start_auto()
+	_advance_for(main, 0.5)
+	main.do_spin()
+	_check(GameState.auto_on, "회전 중 START(남은 릴 정지)는 AUTO를 끄지 않음")
+	_settle(main)
+	_check(not GameState.spinning, "(정리) 회전 중 START 뒤에도 정상 정산")
+	main.free()
+	await get_tree().process_frame
+
+
+func _test_auto_notice_and_stops() -> void:
+	# 피버 적립 안내(BET 8 미만)는 AUTO 중에는 생략, AUTO가 아니면 표시
+	var main: Control = await _auto_main(23, 400, 3)
+	_check(_notice(main).contains("피버 적립"), "(기준) AUTO 꺼짐 + BET 3: 피버 적립 안내 표시")
+	GameState.start_auto()
+	_check(not _notice(main).contains("피버 적립") and _notice(main).begins_with("AUTO 1회"), "AUTO 중에는 피버 적립 안내 줄을 생략")
+	_settle(main)
+	GameState.stop_auto(AutoSpin.REASON_USER)
+	main.free()
+	await get_tree().process_frame
+	# 크레딧 부족: 해제 이유 + 기존 베팅 낮춤 문구
+	var lose_seed: int = _auto_find_seed(64, 64, false)
+	main = await _auto_main(lose_seed, 64, 64)
+	GameState.start_auto()
+	_settle(main)
+	_check(not GameState.auto_on and _notice(main).contains("크레딧이 부족해 AUTO를 해제"), "크레딧 부족: AUTO 자동 해제 + 이유 문구")
+	_check(_notice(main).contains("BET을"), "크레딧 부족: 기존 베팅 낮춤 문구도 함께 나옴")
+	main.free()
+	await get_tree().process_frame
+	# 큰 당첨: stop_on_win_at 이상이면 해제
+	var win_seed: int = _auto_find_seed(400, FULL_BET, true)
+	var data: BalanceData = GameState.get_balance()
+	var original: int = data.auto_stop_on_win_at
+	data.auto_stop_on_win_at = 1
+	main = await _auto_main(win_seed, 400, FULL_BET)
+	GameState.start_auto()
+	_settle(main)
+	_check(not GameState.auto_on and _notice(main).contains("큰 당첨! AUTO를 해제"), "큰 당첨: AUTO 해제 + 이유 문구 (결과 문구 뒤)")
+	_check(_notice(main).begins_with("당첨"), "큰 당첨: 결과 문구가 먼저, 해제 이유가 그 뒤")
+	data.auto_stop_on_win_at = original
+	main.free()
+	await get_tree().process_frame
+
+
+## 피버 연출 중에는 대기시간이 흐르지 않고, 연출이 끝나 정산된 뒤부터 대기시간이 시작된다
+func _test_auto_with_fever() -> void:
+	var data: BalanceData = _fever_test_data()
+	var n: int = _find_fever_spin(data, 1)
+	if n < 0:
+		_check(false, "(준비) 피버가 나오는 스핀을 찾음")
+		return
+	var main: Control = await _fever_world(data, n)
+	GameState.start_auto()
+	var reached: bool = _advance_to_fever(main)
+	_check(reached, "AUTO 판에서 피버 연출이 시작됨")
+	_advance_for(main, 0.3)
+	_check(main.fever_playing() and GameState.spinning and GameState.auto_count() == 1, "피버 연출 중에는 새 판이 시작되지 않음")
+	var guard: int = 0
+	while GameState.spinning and guard < 6000:
+		main.advance(FRAME_DT)
+		guard += 1
+	_check(not GameState.spinning and not main.fever_playing(), "연출이 끝나고 정산됨")
+	_advance_for(main, AUTO_GAP_SEC - 0.15)
+	_check(not GameState.spinning, "연출이 끝난 뒤 대기시간 전에는 다음 판이 시작되지 않음")
+	_advance_for(main, 0.3)
+	_check(GameState.spinning and GameState.auto_count() == 2, "연출이 끝난 뒤 대기시간이 지나면 다음 판 시작")
+	GameState.stop_auto(AutoSpin.REASON_USER)
+	main.free()
+	await get_tree().process_frame

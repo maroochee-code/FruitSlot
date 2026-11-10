@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 0.10.0 — 2026-11-10 (AUTO: 자동 스핀)
+
+### 추가
+- AUTO 토글 버튼(STOP 3 오른쪽, 384,318 60×33)과 단축키 A. 켜면 현재 BET을 유지한 채 정산 뒤(연출 포함) 대기시간 후 다음 판을 자동 시작
+- `AutoSpin`(`scripts/logic/auto_spin.gd`): AUTO 상태·판 수·대기 타이머·큰 당첨 판단. `GameState`가 소유하고 `auto_changed`/`auto_stopped` 시그널로 화면에 알림
+- `feel.json` 새 키 `auto_spin_gap_sec`(0.5, 0~10), `balance.json` 새 키 `auto_spin.stop_on_win_at`(0 = 사용 안 함)
+- AUTO 중 BET / MAX BET / CANCEL / STOP 1~3 비활성, 끄기(AUTO 재클릭·A·대기 중 START)는 진행 중인 판까지만 진행
+- 자동 해제: 크레딧이 총 BET보다 적을 때, 한 판 WIN이 `stop_on_win_at` 이상일 때
+- 메시지 칸: 첫 줄 "AUTO N회" 고정, AUTO 중 피버 적립 안내 생략, 해제 이유는 일회성 문구
+- 버튼 ON 그림 `button_on.png`(밝은 금색 면, 어두운 글자)
+
+### 변경
+- `docs/기획서.md`: 6장에 AUTO 규칙, 2장에 AUTO 버튼, 13장 조작표를 실제 키(A·M·X·키패드 포함)에 맞춰 정리
+- `docs/feel.md`에 `auto_spin_gap_sec` 행 추가
+- 결과 확정 로직(`SlotLogic`)·확률·RNG 사용 방식은 변경 없음 (같은 시드에서 AUTO 결과 = 수동 결과를 테스트로 확인)
+
 ## 0.9.0 — 2026-11-09 (6-C: UI 패널·버튼 3상태·도트 폰트·표시창)
 
 ### 추가
