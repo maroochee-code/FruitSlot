@@ -12,6 +12,10 @@
   assets/ui/wallpaper_tile.png  마름모 벽지 타일 (6-D, 아트 16x16 -> 48x48)
   assets/ui/frame.png           기계 프레임 (6-D, 아트 213x160 -> 640x480, 가운데 투명)
   assets/ui/logo.png            maroochee slot 로고 (6-D, 아트 60x24 -> 180x72, 배경 투명)
+  assets/ui/fever_banner_a/b.png, pool_banner_a/b.png   FEVER! / POOL GET! 배너 (6-E, 색 변형 2개씩)
+  assets/ui/fever_bg_0~2.png, pool_bg_0~2.png          방사형 줄무늬 배경 프레임 (6-E, 640x414)
+  assets/ui/coin_sheet.png      당첨 동전 6프레임 가로 시트 (6-E, 아트 48x8 -> 144x24)
+  assets/_preview/6e_*.png      6-E 연출 전체 화면 합성·배너/배경 모음·동전 x6
   assets/_preview/6d_screen.png 6-D 전체 화면 근사 합성 (640x480)
   assets/_preview/sheet.png   위 전부를 x3 Nearest로 확대해 한 장에 (6-C 에셋은 이미 3배라 그대로 붙임)
 규칙: 안티앨리어싱·그라데이션 없음(색은 팔레트 몇 가지만), 1px 외곽선, 왼쪽 위 밝게/오른쪽 아래 어둡게 2톤, 하이라이트 점.
@@ -686,6 +690,394 @@ def visible_wall_report(covered, frame):
     return wall, SCREEN_W * SCREEN_H
 
 
+
+# ------------------------------------------------------------------ 6-E 피버·풀 연출 아트 + 당첨 동전
+
+import json
+import math
+
+OVERLAY_ART_H = 138                      # 연출이 덮는 높이 (아트). 하단 표시창(y=138~) 위까지. 640x414 px
+OVERLAY_PX_H = OVERLAY_ART_H * 3
+BG_FRAME_COUNT = 3
+BG_RAYS = 20                              # 방사형 줄무늬 개수 (짝수)
+BG_CENTER = (106.5, 60.0)                 # 아트 좌표. 배너·심볼 뒤에 오는 중심
+BG_TONES = {
+    "fever": (rgb("2a0a14"), rgb("3d1220")),   # 어두운 적갈색 두 톤 (글자·숫자가 잘 보이게 차이를 작게)
+    "pool": (rgb("0f3320"), rgb("164a2e")),    # 어두운 녹색 두 톤
+}
+GOLD_MARK = rgb("d09a14")
+
+FEVER_BANNER_SIZE = (120, 28)
+POOL_BANNER_SIZE = (136, 28)
+COIN_SIZE = 8
+COIN_FRAMES = 6
+COIN_WIDTHS = [8, 6, 4, 4, 4, 6]          # 정면 -> 옆면(프레임 3 = 납작한 옆면) -> 뒷면 -> 정면. 프레임 4·5는 좌우를 뒤집은 뒷면
+
+# 연출 배치 (아트 좌표, 213x138 영역 안). 6-E-2에서 같은 값을 상수로 쓴다.
+LAYOUT = {
+    "banner_y": 10,       # 배너 위쪽
+    "tile": (88, 44),     # 칸 타일(36x28) 왼쪽 위
+    "name_y": 76,         # 심볼 이름 글자 줄 위쪽 (갈무리14 x3 = 15 아트)
+    "plate": (22, 96, 168, 28),  # BONUS 판 x, y, 폭, 높이
+    "hint_px_y": 390,     # 건너뛰기 힌트 (640x480 px 기준)
+    "coin_row_y": 52,     # 풀 단계: 동전 줄 위쪽
+}
+
+
+def _r(x, y, w, h):
+    return {(i, j) for i in range(x, x + w) for j in range(y, y + h)}
+
+
+def glyph_mask(ch, w, h, t):
+    """블록 글자 한 개의 점 집합 (0,0 기준, 크기 w x h, 획 두께 t)."""
+    m = set()
+    if ch == "F":
+        m |= _r(0, 0, t, h) | _r(0, 0, w, t) | _r(0, (h - t) // 2 - 1, w - 3, t)
+    elif ch == "E":
+        m |= _r(0, 0, t, h) | _r(0, 0, w, t) | _r(0, (h - t) // 2 - 1, w - 2, t) | _r(0, h - t, w, t)
+    elif ch == "V":
+        sw = t + 1
+        end = (w - sw) // 2
+        for y in range(h):
+            lx = int(round(y * end / (h - 1)))
+            m |= {(x, y) for x in range(lx, lx + sw)} | {(x, y) for x in range(w - lx - sw, w - lx)}
+    elif ch in ("R", "P"):
+        bh = int(h * (0.58 if ch == "R" else 0.6))
+        m |= _r(0, 0, t, h) | _r(0, 0, w - 1, t) | _r(0, bh - t, w - 1, t) | _r(w - 1 - t, 0, t, bh)
+        if ch == "R":
+            m -= _r(t, bh, w, h)  # 아래쪽은 왼쪽 세로 획만 남기고 다리를 따로 그린다
+            m |= _r(0, bh, t, h - bh)
+            for y in range(bh, h):
+                k = (y - bh) / max(1, h - bh - 1)
+                lx = int(round(3 + k * (w - t - 1 - 3)))
+                m |= {(x, y) for x in range(lx, lx + t + 1) if x < w}
+        else:
+            m -= _r(t, bh, w, h)
+            m |= _r(0, bh, t, h - bh)
+    elif ch == "O":
+        m |= _r(0, 0, t, h) | _r(w - t, 0, t, h) | _r(0, 0, w, t) | _r(0, h - t, w, t)
+        m -= {(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)}
+    elif ch == "L":
+        m |= _r(0, 0, t, h) | _r(0, h - t, w, t)
+    elif ch == "G":
+        m |= _r(0, 0, t, h) | _r(0, 0, w, t) | _r(0, h - t, w, t) | _r(w - t, h // 2 - 1, t, h - (h // 2 - 1))
+        m |= _r(w // 2 - 1, h // 2 - 1, w - (w // 2 - 1), t)
+        m -= {(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)}
+    elif ch == "T":
+        m |= _r(0, 0, w, t) | _r((w - t) // 2, 0, t, h)
+    elif ch == "!":
+        m |= _r(0, 0, w, h - t - 3) | _r(0, h - t - 1, w, t + 1)
+    return m
+
+
+def block_text(text, w, h, t, gap, space_w, x0, y0):
+    """글자들을 이어 붙인 점 집합과, 글자별 점 집합 목록, 전체 폭."""
+    mask, letters = set(), []
+    x = x0
+    for i, ch in enumerate(text):
+        if ch == " ":
+            x += space_w + gap
+            continue
+        cw = 4 if ch == "!" else w
+        g = {(gx + x, gy + y0) for gx, gy in glyph_mask(ch, cw, h, t)}
+        letters.append(g)
+        mask |= g
+        x += cw + gap
+    return mask, letters, x - gap - x0
+
+
+def text_width(text, w, gap, space_w):
+    total = 0
+    for ch in text:
+        total += (space_w if ch == " " else (4 if ch == "!" else w)) + gap
+    return total - gap
+
+
+def paint_mask(c, mask, color_fn):
+    """8방향 1px 외곽선을 두르고 color_fn(x, y)로 칠한다."""
+    for x, y in mask:
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                q = (x + dx, y + dy)
+                if q not in mask and c.inside(*q):
+                    c.set(q[0], q[1], OUTLINE)
+    for x, y in mask:
+        c.set(x, y, color_fn(x, y))
+
+
+def highlight_letters(c, letters):
+    """글자마다 왼쪽 위 안쪽에 하이라이트 점 1개."""
+    for g in letters:
+        x0 = min(x for x, _ in g)
+        y0 = min(y for _, y in g)
+        for q in ((x0 + 1, y0 + 1), (x0, y0 + 1), (x0 + 1, y0)):
+            if q in g:
+                c.set(q[0], q[1], WHITE)
+                break
+
+
+def flame_masks(w, h, flip):
+    """불꽃 겉 모양과 속(밝은 심) 모양 (0,0 기준)."""
+    outer, core = set(), set()
+    base = w / 2 - 0.5
+    for y in range(h):
+        t = y / (h - 1)
+        hw = base * (min(1.0, (t / 0.72)) ** 0.7) if t <= 0.72 else base * math.sqrt(max(0.0, 1 - ((t - 0.72) / 0.28) ** 2))
+        sway = 1.6 * math.sin(t * math.pi) * (-1 if flip else 1)
+        cx = w / 2 + sway
+        for x in range(w):
+            d = abs(x + 0.5 - cx)
+            if d <= hw + 0.45:
+                outer.add((x, y))
+            if 0.42 < t < 0.95 and d <= hw * 0.5:
+                core.add((x, y))
+    return outer, core
+
+
+def draw_flame(c, ox, oy, w, h, flip, light, dark):
+    outer, core = flame_masks(w, h, flip)
+    outer = {(x + ox, y + oy) for x, y in outer}
+    core = {(x + ox, y + oy) for x, y in core}
+    paint_mask(c, outer, lambda x, y: light if (x - ox) < w / 2 else dark)
+    for x, y in core:
+        c.set(x, y, TONES["gold"][0])
+
+
+def sparkle(c, cx, cy):
+    cream = TONES["cream"][0]
+    for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+        c.set(cx + dx, cy + dy, cream)
+    for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
+        c.set(cx + dx, cy + dy, TONES["cream"][1])
+    c.set(cx, cy, WHITE)
+
+
+def fever_banner(variant):
+    """FEVER! 120x28. a = 주황→빨강 글자 + 빨간 불꽃 / b = 금색→주황 글자 + 주황 불꽃 (6-F에서 번갈아 깜빡임)."""
+    face = (TONES["orange"][0], TONES["red"][0]) if variant == "a" else (TONES["gold"][0], TONES["orange"][0])
+    fire = TONES["red"] if variant == "a" else TONES["orange"]
+    w, h, t, gap = 14, 16, 3, 2
+    c = Canvas(*FEVER_BANNER_SIZE)
+    total = text_width("FEVER!", w, gap, 0)
+    x0, y0 = (FEVER_BANNER_SIZE[0] - total) // 2, (FEVER_BANNER_SIZE[1] - h) // 2
+    mask, letters, _ = block_text("FEVER!", w, h, t, gap, 0, x0, y0)
+    split = y0 + int(h * 0.55)
+    draw_flame(c, 3, 3, 12, 22, False, fire[0], fire[1])
+    draw_flame(c, FEVER_BANNER_SIZE[0] - 3 - 12, 3, 12, 22, True, fire[0], fire[1])
+    paint_mask(c, mask, lambda x, y: face[0] if y < split else face[1])
+    highlight_letters(c, letters)
+    return c
+
+
+def pool_banner(variant):
+    """POOL GET! 136x28. 초록 리본 위 글자. a = 금색 글자 / b = 연한 연두 글자."""
+    face = TONES["gold"] if variant == "a" else TONES["pale"]
+    ribbon = (rgb("4cc24a"), rgb("2b8a3a"))
+    w, h, t, gap, space_w = 11, 14, 3, 2, 7
+    W, H = POOL_BANNER_SIZE
+    c = Canvas(W, H)
+    rb = set()
+    for y in range(4, 24):
+        notch = 4 - abs(y - 13.5) * 0.45
+        for x in range(W):
+            if x >= notch and x < W - notch:
+                rb.add((x, y))
+    paint_mask(c, rb, lambda x, y: ribbon[0] if y < 14 else ribbon[1])
+    total = text_width("POOL GET!", w, gap, space_w)
+    x0, y0 = (W - total) // 2, (H - h) // 2
+    mask, letters, _ = block_text("POOL GET!", w, h, t, gap, space_w, x0, y0)
+    split = y0 + int(h * 0.55)
+    paint_mask(c, mask, lambda x, y: face[0] if y < split else face[1])
+    highlight_letters(c, letters)
+    coin = coin_frame(0).image()
+    c_img = c.image()
+    c_img.alpha_composite(coin, (6, 10))
+    c_img.alpha_composite(coin.transpose(Image.FLIP_LEFT_RIGHT), (W - 6 - COIN_SIZE, 10))
+    sparkle_c = Canvas(W, H)
+    sparkle_c.px = [[c_img.getpixel((x, y)) for x in range(W)] for y in range(H)]
+    sparkle(sparkle_c, 28, 2)
+    sparkle(sparkle_c, W - 29, 2)
+    return sparkle_c
+
+
+def coin_frame(i):
+    """8x8 동전 한 프레임. 폭 COIN_WIDTHS[i]. 프레임 4, 5는 좌우를 뒤집은 뒷면."""
+    c = Canvas(COIN_SIZE, COIN_SIZE)
+    wd = COIN_WIDTHS[i]
+    if i == 3:  # 납작한 옆면: 2px 폭의 금색 띠
+        body = _r(3, 1, 2, 6)
+        c.part(body, "gold", split=0.5)
+        # 위아래 모서리는 외곽선만 남도록 part가 둘러 준다
+    else:
+        rx = (wd - 2) / 2 + (0.35 if wd == 4 else 0.0)
+        ry = 2.4 if wd == 4 else 3.0
+        body = set()
+        for y in range(COIN_SIZE):
+            for x in range(COIN_SIZE):
+                if ((x + 0.5 - 4) / rx) ** 2 + ((y + 0.5 - 4) / ry) ** 2 <= 1.05:
+                    body.add((x, y))
+        c.part(body, "gold", split=1.15)
+        if wd >= 6:
+            xs = sorted({x for x, _ in body})
+            mid = xs[len(xs) // 2 - 1]
+            for y in (3, 4, 5):
+                c.set(mid, y, GOLD_MARK)
+            c.set(xs[0] + 1, 2, WHITE)
+    img = c.image()
+    if i >= 4:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        c.px = [[img.getpixel((x, y)) for x in range(COIN_SIZE)] for y in range(COIN_SIZE)]
+    return c
+
+
+def coin_sheet():
+    """6프레임 가로 시트 (48x8 아트)."""
+    sheet = Image.new("RGBA", (COIN_SIZE * COIN_FRAMES, COIN_SIZE), CLEAR)
+    for i in range(COIN_FRAMES):
+        sheet.alpha_composite(coin_frame(i).image(), (i * COIN_SIZE, 0))
+    return sheet
+
+
+def burst_bg(kind, frame):
+    """방사형 줄무늬 배경 213x138 (아트). frame 0~2는 줄무늬가 1/3칸씩 돌아간 모양. 맨 오른쪽 1px 열은 복사."""
+    dark, light = BG_TONES[kind]
+    img = Image.new("RGBA", (ART_W, OVERLAY_ART_H), dark)
+    cx, cy = BG_CENTER
+    phase = frame / BG_FRAME_COUNT
+    for y in range(OVERLAY_ART_H):
+        for x in range(ART_W):
+            ang = math.atan2(y + 0.5 - cy, x + 0.5 - cx) / (2 * math.pi) % 1.0
+            idx = int(ang * BG_RAYS + phase) % 2
+            img.putpixel((x, y), light if idx == 0 else dark)
+    return img
+
+
+def bg_final(kind, frame):
+    """아트 x3 = 639x414 + 오른쪽 1px 복사 -> 640x414"""
+    img = scaled(burst_bg(kind, frame))
+    out = Image.new("RGBA", (SCREEN_W, OVERLAY_PX_H), CLEAR)
+    out.paste(img, (0, 0))
+    out.paste(img.crop((img.width - 1, 0, img.width, img.height)), (img.width, 0))
+    return out
+
+
+def _symbol_names():
+    data = json.load(open(ROOT / "data/balance.json", encoding="utf-8"))
+    return {s["id"]: s["name"] for s in data["symbols"]}
+
+
+def _text_img(text, size, color, mult):
+    """갈무리 글자를 원래 크기에서 안티앨리어싱 없이 그린 뒤 mult배 Nearest로 키운다."""
+    fnt = ImageFont.truetype(str(ROOT / "assets/fonts/Galmuri14.ttf"), size)
+    img = Image.new("RGBA", (size * (len(text) + 2), size + 8), CLEAR)
+    d = ImageDraw.Draw(img)
+    d.fontmode = "1"
+    d.text((1, 2), text, font=fnt, fill=color)
+    box = img.getbbox()
+    img = img.crop(box) if box else img
+    return img.resize((img.width * mult, img.height * mult), Image.NEAREST)
+
+
+def overlay_preview(base, kind, symbol, bonus, step_text, bg_idx, variant):
+    """현재 화면(base) 위에 연출 한 장면을 합성한다. kind = fever / pool."""
+    scr = base.copy()
+    scr.alpha_composite(bg_final(kind, bg_idx), (0, 0))
+    banner = (fever_banner if kind == "fever" else pool_banner)(variant).image()
+    bx = (ART_W - banner.width) // 2
+    scr.alpha_composite(scaled(banner), (bx * 3, LAYOUT["banner_y"] * 3))
+    names = _symbol_names()
+    if kind == "fever":
+        tile = Image.open(ROOT / "assets/ui/cell_tile.png").convert("RGBA")
+        sym = Image.open(ROOT / f"assets/symbols/{symbol.lower()}.png").convert("RGBA")
+        tile.alpha_composite(sym, (2, 2))
+        tx, ty = LAYOUT["tile"]
+        scr.alpha_composite(scaled(tile), (tx * 3, ty * 3))
+        name = names[symbol]
+        plate_text = "BONUS +%d" % bonus
+        mult = 3
+    else:
+        # 풀: 칸 타일 대신 동전 줄 (프레임 0~4를 차례로 보여 줌 = 6-F에서 회전)
+        sheet = coin_sheet()
+        for i in range(5):
+            fr = sheet.crop((i * COIN_SIZE, 0, (i + 1) * COIN_SIZE, COIN_SIZE))
+            scr.alpha_composite(scaled(fr), ((70 + i * 16) * 3, LAYOUT["coin_row_y"] * 3))
+        name = "POOL"
+        plate_text = "POOL +%d" % bonus
+        mult = 4
+    nimg = _text_img(name, 15, TONES["cream"][0], 3)
+    scr.alpha_composite(nimg, ((SCREEN_W - nimg.width) // 2, LAYOUT["name_y"] * 3))
+    px, py, pw, ph = LAYOUT["plate"]
+    plate = nine_slice(Image.open(ROOT / "assets/ui/panel.png").convert("RGBA"), pw * 3, ph * 3)
+    scr.alpha_composite(plate, (px * 3, py * 3))
+    timg = _text_img(plate_text, 15, rgb("ffd23a"), mult)
+    scr.alpha_composite(timg, (px * 3 + (pw * 3 - timg.width) // 2, py * 3 + (ph * 3 - timg.height) // 2))
+    small = ImageFont.truetype(str(ROOT / "assets/fonts/Galmuri11.ttf"), 12)
+    d = ImageDraw.Draw(scr)
+    d.fontmode = "1"
+    hint = "SPACE: 건너뛰기"
+    d.text(((SCREEN_W - d.textlength(hint, font=small)) // 2, LAYOUT["hint_px_y"]), hint, font=small, fill=rgb("8a8aa0"))
+    cnt = step_text
+    if cnt:
+        d.text((SCREEN_W - 12 - d.textlength(cnt, font=small), 8), cnt, font=small, fill=rgb("8a8aa0"))
+    fits = timg.width <= pw * 3 - 12 * 3
+    return scr, fits
+
+
+def build_6e(base):
+    """6-E 에셋을 저장하고 미리보기를 만든다. base = 6-D 전체 화면 근사본."""
+    ui = ROOT / "assets/ui"
+    prev = ROOT / "assets/_preview"
+    for v in ("a", "b"):
+        scaled(fever_banner(v).image()).save(ui / f"fever_banner_{v}.png")
+        scaled(pool_banner(v).image()).save(ui / f"pool_banner_{v}.png")
+    for kind in ("fever", "pool"):
+        for i in range(BG_FRAME_COUNT):
+            bg_final(kind, i).save(ui / f"{kind}_bg_{i}.png")
+    scaled(coin_sheet()).save(ui / "coin_sheet.png")
+    p1, f1 = overlay_preview(base, "fever", "CHERRY", 88, "1 / 2", 0, "a")
+    p2, f2 = overlay_preview(base, "fever", "SEVEN", 800, "2 / 2", 1, "b")
+    p3, f3 = overlay_preview(base, "pool", "", 1523, "2 / 2", 0, "a")
+    p4, f4 = overlay_preview(base, "pool", "", 1523, "2 / 2", 2, "b")
+    p1.save(prev / "6e_fever.png")
+    p2.save(prev / "6e_fever_seven_b.png")
+    p3.save(prev / "6e_pool.png")
+    p4.save(prev / "6e_pool_b.png")
+    print("BONUS/POOL 금액 글자가 판 안에 들어감:", f1 and f2 and f3 and f4)
+    # 배너·배경 프레임 한눈에 보기
+    pad = 12
+    sheet = Image.new("RGBA", (3 * 426 + 4 * pad, 120 * 3 + 2 * 276 + 5 * pad), rgb("2a2a44"))
+    y = pad
+    x = pad
+    for v in ("a", "b"):
+        sheet.alpha_composite(scaled(fever_banner(v).image()), (x, y))
+        x += FEVER_BANNER_SIZE[0] * 3 + pad
+    y += 28 * 3 + pad
+    x = pad
+    for v in ("a", "b"):
+        sheet.alpha_composite(scaled(pool_banner(v).image()), (x, y))
+        x += POOL_BANNER_SIZE[0] * 3 + pad
+    y += 28 * 3 + pad
+    for kind in ("fever", "pool"):
+        x = pad
+        for i in range(BG_FRAME_COUNT):
+            bg = burst_bg(kind, i).resize((ART_W * 2, OVERLAY_ART_H * 2), Image.NEAREST)
+            sheet.alpha_composite(bg, (x, y))
+            x += 426 + pad
+        y += 276 + pad
+    sheet.crop((0, 0, sheet.width, y)).save(prev / "6e_overview.png")
+    # 동전 시트 x6: 여러 바탕 위
+    backs = [("panel", FRAME_FILL), ("wall dark", WALL_DARK), ("wall light", WALL_LIGHT),
+             ("fever bg", BG_TONES["fever"][1]), ("pool bg", BG_TONES["pool"][1])]
+    coin_img = Image.new("RGBA", (COIN_FRAMES * 56 + 20, len(backs) * 56 + 12), rgb("2a2a44"))
+    cs = coin_sheet()
+    for r, (_, col) in enumerate(backs):
+        ImageDraw.Draw(coin_img).rectangle([6, 6 + r * 56, 6 + COIN_FRAMES * 56 + 7, 6 + r * 56 + 51], fill=col)
+        for i in range(COIN_FRAMES):
+            fr = cs.crop((i * COIN_SIZE, 0, (i + 1) * COIN_SIZE, COIN_SIZE)).resize((COIN_SIZE * 6, COIN_SIZE * 6), Image.NEAREST)
+            coin_img.alpha_composite(fr, (10 + i * 56, 6 + r * 56 + 2))
+    coin_img.save(prev / "6e_coin_x6.png")
+
+
 # ------------------------------------------------------------------ 저장·미리보기
 
 BIG = {"cherry": big_cherry, "orange": big_orange, "melon": big_melon, "grape": big_grape,
@@ -777,6 +1169,8 @@ def main():
     print("logo bounds (art):", lb, "inner:", LOGO_INNER, "OK" if inside else "OUT OF PANEL")
     wall_px, total = visible_wall_report(covered, frame)
     print("visible wallpaper px: %d / %d = %.1f%%" % (wall_px, total, wall_px * 100.0 / total))
+    # 6-E: 피버·풀 연출 아트 + 동전
+    build_6e(screen)
 
 
 if __name__ == "__main__":

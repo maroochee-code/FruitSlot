@@ -1,9 +1,11 @@
 class_name FeverOverlay
 extends Control
-## 피버 발동 연출: 화면 전체를 덮는 오버레이. 단계(step)를 차례로 보여 준다.
-## 한 단계 = 심볼 하나의 "FEVER! / 심볼 이름 / BONUS +금액". 단계 사이에는 빈 간격이 있다.
+## 피버 발동 연출: 화면 윗부분(하단 CREDIT/WIN/BET 줄 위까지)을 덮는 오버레이. 단계(step)를 차례로 보여 준다.
+## 한 단계 = 심볼 하나의 "FEVER! 배너 / 심볼 칸 / 심볼 이름 / BONUS +금액". 단계 사이에는 빈 간격(배경만)이 있다.
 ## 이 클래스는 보여주기만 한다. 금액·순서는 확정된 SpinResult에서 그대로 받고, 건너뛰어도 숫자는 달라지지 않는다.
 ## 세븐 피버로 풀을 획득했으면 풀 획득 단계(kind = KIND_POOL)가 목록 맨 끝에 붙는다. 단계마다 보여 주는 시간이 다를 수 있다.
+## 6-E: 배너·배경·심볼 칸·동전은 도트 그림(assets/ui)이고, 이름·금액은 갈무리14 글자다.
+## 움직임(배경 프레임 번갈이·배너 색 번갈이·동전 회전)은 6-F에서 한다. 입력(마우스)은 화면 전체를 막는다.
 
 signal step_started(index: int)
 signal step_finished(index: int)
@@ -14,29 +16,41 @@ const KIND_FEVER: StringName = &"fever"
 const KIND_POOL: StringName = &"pool"
 
 const SCREEN_SIZE: Vector2 = Vector2(640, 480)
-const DIM_COLOR: Color = Color(0.0, 0.0, 0.05, 0.88)
+const ART: int = SymbolStyle.ART_SCALE
+## 그림이 덮는 영역 = 아트 138줄 = 640×414 (하단 표시창 y=414 바로 위까지)
+const OVERLAY_SIZE: Vector2 = Vector2(640, 414)
+const ART_WIDTH: int = 213
 const TITLE_TEXT: String = "FEVER!"
 const POOL_TITLE_TEXT: String = "POOL GET!"
 const POOL_NAME_TEXT: String = "POOL"
-const POOL_BANNER_BG: Color = Color("FFB040")
-const POOL_BANNER_FG: Color = Color("2A1800")
-const TITLE_Y: float = 70.0
-## 글자 크기는 갈무리 원래 크기의 정수배: 14(15px) ×5 = 75, ×3 = 45 / 11(12px) ×4 = 48, ×1 = 12
-const TITLE_FONT_MULTIPLE: int = 5
-const TITLE_COLOR_A: Color = Color("FFD700")
-const TITLE_COLOR_B: Color = Color("FF4040")
-## FEVER! 글자 색이 바뀌는 간격(초)
-const TITLE_FLASH_SEC: float = 0.15
-const BANNER_RECT: Rect2 = Rect2(170, 180, 300, 70)
+## 그림 파일. 배경은 종류별 3프레임, 배너는 색 변형 a/b 2장 (번갈이는 6-F)
+const BG_PATH: String = "res://assets/ui/%s_bg_%d.png"
+const BANNER_PATH: String = "res://assets/ui/%s_banner_%s.png"
+const BG_FRAME_COUNT: int = 3
+const BANNER_VARIANTS: PackedStringArray = ["a", "b"]
+## 배치 (아트 좌표, 213×138 영역 안. 화면 좌표 = 아트 × 3)
+const BANNER_Y_ART: int = 10
+const TILE_POS_ART: Vector2i = Vector2i(88, 44)
+const NAME_Y_ART: int = 76
+const NAME_H_ART: int = 16
+const PLATE_RECT_ART: Rect2i = Rect2i(22, 96, 168, 28)
+## 풀 단계의 동전 줄: 첫 동전 x, 간격, 개수, y (아트 좌표). 크기·회전은 6-F에서 조정한다.
+const COIN_ROW_X_ART: int = 70
+const COIN_ROW_STEP_ART: int = 16
+const COIN_ROW_COUNT: int = 5
+const COIN_ROW_Y_ART: int = 52
+## 글자 크기는 갈무리 원래 크기의 정수배: 14(15px) ×3 = 45, 풀 금액은 ×4 = 60
 const NAME_FONT_MULTIPLE: int = 3
-const BONUS_Y: float = 275.0
-const BONUS_FONT_MULTIPLE: int = 4
-const BONUS_COLOR: Color = Color("FFD700")
+const NAME_COLOR: Color = Color("f7e6b8")
+const BONUS_FONT_MULTIPLE: int = 3
+const POOL_BONUS_FONT_MULTIPLE: int = 4
+const BONUS_COLOR: Color = Color("ffd23a")
 const COUNT_FONT_MULTIPLE: int = 1
 const COUNT_COLOR: Color = Color("8A8AA0")
 const HINT_TEXT: String = "SPACE: 건너뛰기"
 const HINT_FONT_MULTIPLE: int = 1
-const HINT_Y: float = 440.0
+## 건너뛰기 힌트는 그림 영역 맨 아래 (390 + 24 = 414)
+const HINT_Y: float = 390.0
 
 var _steps: Array[Dictionary] = []
 var _step_sec: float = 0.0
@@ -52,10 +66,20 @@ var _playing: bool = false
 var _started_count: int = 0
 var _finished_count: int = 0
 
-var _title: Label = Label.new()
-var _banner: Panel = Panel.new()
-var _banner_box: StyleBoxFlat = StyleBoxFlat.new()
+## 지금(또는 마지막으로) 보여 준 단계 종류, 배너가 읽히는 글자, 배경 프레임, 배너 색 변형
+var _kind: StringName = KIND_FEVER
+var _title_text: String = ""
+var _bg_frame: int = 0
+var _banner_variant: int = 0
+var _bg: TextureRect = TextureRect.new()
+var _bg_textures: Dictionary = {}
+var _banners: Dictionary = {}
+var _banner_textures: Dictionary = {}
+var _tile: TextureRect = TextureRect.new()
+var _icon: TextureRect = TextureRect.new()
+var _coin_row: Control = Control.new()
 var _name: Label = Label.new()
+var _plate: Panel = Panel.new()
 var _bonus: Label = Label.new()
 var _counter: Label = Label.new()
 var _hint: Label = Label.new()
@@ -68,28 +92,8 @@ func _init() -> void:
 	# 아래 화면의 마우스 입력을 막는다 (버튼 클릭 방지)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = false
-	var dim: ColorRect = ColorRect.new()
-	dim.color = DIM_COLOR
-	dim.size = SCREEN_SIZE
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(dim)
-	_setup_label(_title, Rect2(0, TITLE_Y, SCREEN_SIZE.x, 100), UiFont.Face.LARGE, TITLE_FONT_MULTIPLE, TITLE_COLOR_A)
-	_title.text = TITLE_TEXT
-	_banner.position = BANNER_RECT.position
-	_banner.size = BANNER_RECT.size
-	_banner.add_theme_stylebox_override("panel", _banner_box)
-	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_banner)
-	_name.size = BANNER_RECT.size
-	_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UiFont.apply(_name, UiFont.Face.LARGE, NAME_FONT_MULTIPLE)
-	_banner.add_child(_name)
-	_setup_label(_bonus, Rect2(0, BONUS_Y, SCREEN_SIZE.x, 70), UiFont.Face.BODY, BONUS_FONT_MULTIPLE, BONUS_COLOR)
-	_setup_label(_counter, Rect2(0, 8, SCREEN_SIZE.x - 12, 24), UiFont.Face.BODY, COUNT_FONT_MULTIPLE, COUNT_COLOR)
-	_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_setup_label(_hint, Rect2(0, HINT_Y, SCREEN_SIZE.x, 24), UiFont.Face.BODY, HINT_FONT_MULTIPLE, COUNT_COLOR)
-	_hint.text = HINT_TEXT
+	_build_art()
+	_build_texts()
 	_show_step_content(false)
 
 
@@ -179,9 +183,21 @@ func current_step() -> int:
 	return _step_index_at(_elapsed) if _playing else -1
 
 
-## 화면에 보이는 글자: { title, name, bonus }
+## 화면에 보이는 글자: { title, name, bonus }. title은 배너 그림이 읽히는 글자, name은 이름 줄 글자(풀 단계는 줄이 없어서 빈 글자).
 func shown_texts() -> Dictionary:
-	return { "title": _title.text, "name": _name.text, "bonus": _bonus.text }
+	return { "title": _title_text, "name": _name.text if _name.visible else "", "bonus": _bonus.text }
+
+
+## 배경 프레임 번호(0~2)를 바꾼다. 6-F의 움직임과 미리보기 씬이 쓴다.
+func set_bg_frame(index: int) -> void:
+	_bg_frame = posmod(index, BG_FRAME_COUNT)
+	_bg.texture = _bg_textures[_kind][_bg_frame]
+
+
+## 배너 색 변형(0 = a, 1 = b)을 바꾼다.
+func set_banner_variant(index: int) -> void:
+	_banner_variant = posmod(index, BANNER_VARIANTS.size())
+	(_banners[_kind] as TextureRect).texture = _banner_textures[_kind][_banner_variant]
 
 
 func elapsed() -> float:
@@ -203,6 +219,82 @@ func skip() -> bool:
 	return true
 
 
+func _build_art() -> void:
+	_bg.name = "BgFrame"
+	_bg.size = OVERLAY_SIZE
+	_setup_art(_bg)
+	for kind: StringName in [KIND_FEVER, KIND_POOL]:
+		var key: String = _asset_key(kind)
+		var frames: Array[Texture2D] = []
+		for i: int in BG_FRAME_COUNT:
+			frames.append(load(BG_PATH % [key, i]) as Texture2D)
+		_bg_textures[kind] = frames
+		var variants: Array[Texture2D] = []
+		for variant: String in BANNER_VARIANTS:
+			variants.append(load(BANNER_PATH % [key, variant]) as Texture2D)
+		_banner_textures[kind] = variants
+		var banner: TextureRect = TextureRect.new()
+		banner.name = "BannerFever" if kind == KIND_FEVER else "BannerPool"
+		banner.texture = variants[0]
+		banner.size = variants[0].get_size()
+		var banner_art_width: int = int(banner.size.x) / ART
+		banner.position = Vector2((ART_WIDTH - banner_art_width) / 2 * ART, BANNER_Y_ART * ART)
+		_setup_art(banner)
+		_banners[kind] = banner
+	_bg.texture = _bg_textures[KIND_FEVER][0]
+	_tile.name = "SymbolTile"
+	_tile.texture = SymbolStyle.load_tile()
+	_tile.position = Vector2(TILE_POS_ART) * ART
+	_tile.size = _tile.texture.get_size() * ART
+	_setup_art(_tile)
+	_icon.name = "SymbolIcon"
+	_icon.position = Vector2(SymbolStyle.SYMBOL_ART_OFFSET * ART)
+	_setup_art(_icon, false)
+	_tile.add_child(_icon)
+	_coin_row.name = "CoinRow"
+	_coin_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_coin_row)
+	for i: int in COIN_ROW_COUNT:
+		var coin: TextureRect = TextureRect.new()
+		coin.name = "Coin%d" % i
+		coin.texture = CoinSheet.frame(i)
+		coin.position = Vector2((COIN_ROW_X_ART + i * COIN_ROW_STEP_ART) * ART, COIN_ROW_Y_ART * ART)
+		coin.size = Vector2(CoinSheet.FRAME_PX, CoinSheet.FRAME_PX)
+		coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_coin_row.add_child(coin)
+
+
+func _build_texts() -> void:
+	_setup_label(_name, Rect2(0, NAME_Y_ART * ART, SCREEN_SIZE.x, NAME_H_ART * ART), UiFont.Face.LARGE, NAME_FONT_MULTIPLE, NAME_COLOR)
+	_name.name = "NameLabel"
+	_plate.name = "BonusPlate"
+	_plate.position = Vector2(PLATE_RECT_ART.position * ART)
+	_plate.size = Vector2(PLATE_RECT_ART.size * ART)
+	_plate.add_theme_stylebox_override("panel", UiSkin.panel_box())
+	_plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_plate)
+	_setup_label(_bonus, Rect2(Vector2.ZERO, _plate.size), UiFont.Face.LARGE, BONUS_FONT_MULTIPLE, BONUS_COLOR)
+	_bonus.name = "BonusLabel"
+	_bonus.reparent(_plate, false)
+	_setup_label(_counter, Rect2(0, 8, SCREEN_SIZE.x - 12, 24), UiFont.Face.BODY, COUNT_FONT_MULTIPLE, COUNT_COLOR)
+	_counter.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_setup_label(_hint, Rect2(0, HINT_Y, SCREEN_SIZE.x, 24), UiFont.Face.BODY, HINT_FONT_MULTIPLE, COUNT_COLOR)
+	_hint.text = HINT_TEXT
+
+
+## 그림 노드 공통 설정: 클릭을 막지 않고, 정해 준 크기로 Nearest 확대 없이 그린다.
+func _setup_art(rect: TextureRect, attach: bool = true) -> void:
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	if attach:
+		add_child(rect)
+
+
+static func _asset_key(kind: StringName) -> String:
+	return "fever" if kind == KIND_FEVER else "pool"
+
+
 func _update() -> void:
 	var total: float = _ends[_ends.size() - 1]
 	var index: int = _step_index_at(_elapsed)
@@ -216,10 +308,9 @@ func _update() -> void:
 	if _elapsed >= total:
 		_finish(false)
 		return
-	_show_step_content(index >= 0)
 	if index >= 0:
 		_apply_step(index)
-	_title.add_theme_color_override("font_color", TITLE_COLOR_A if int(_elapsed / TITLE_FLASH_SEC) % 2 == 0 else TITLE_COLOR_B)
+	_show_step_content(index >= 0)
 
 
 func _finish(skipped: bool) -> void:
@@ -260,21 +351,30 @@ func _step_end(index: int) -> float:
 func _apply_step(index: int) -> void:
 	var step: Dictionary = _steps[index]
 	var is_pool: bool = step["kind"] == KIND_POOL
-	var style: Dictionary = { "bg": POOL_BANNER_BG, "fg": POOL_BANNER_FG } if is_pool else SymbolStyle.get_style(step["symbol"])
-	_banner_box.bg_color = style["bg"]
-	_banner_box.border_color = Color("FFD700")
-	_banner_box.set_border_width_all(3)
-	_title.text = POOL_TITLE_TEXT if is_pool else TITLE_TEXT
+	_kind = KIND_POOL if is_pool else KIND_FEVER
+	_title_text = POOL_TITLE_TEXT if is_pool else TITLE_TEXT
+	set_bg_frame(_bg_frame)
+	set_banner_variant(_banner_variant)
+	if not is_pool:
+		_icon.texture = SymbolStyle.load_icon(step["symbol"])
+		if _icon.texture != null:
+			_icon.size = _icon.texture.get_size() * ART
 	_name.text = step["name"]
-	_name.add_theme_color_override("font_color", style["fg"])
+	var multiple: int = POOL_BONUS_FONT_MULTIPLE if is_pool else BONUS_FONT_MULTIPLE
+	UiFont.apply(_bonus, UiFont.Face.LARGE, multiple)
 	_bonus.text = ("POOL +%d" if is_pool else "BONUS +%d") % step["bonus"]
 	_counter.text = "%d / %d" % [index + 1, _steps.size()] if _steps.size() > 1 else ""
 
 
+## 단계 내용(배너·심볼 칸·동전·이름·금액 판·카운터)을 보이거나 숨긴다. 배경과 힌트는 연출 중이면 계속 보인다.
 func _show_step_content(show_content: bool) -> void:
-	_title.visible = show_content
-	_banner.visible = show_content
-	_bonus.visible = show_content
+	_bg.visible = _playing
+	for kind: StringName in _banners:
+		(_banners[kind] as TextureRect).visible = show_content and kind == _kind
+	_tile.visible = show_content and _kind == KIND_FEVER
+	_coin_row.visible = show_content and _kind == KIND_POOL
+	_name.visible = show_content and _kind == KIND_FEVER
+	_plate.visible = show_content
 	_counter.visible = show_content
 	_hint.visible = _playing
 

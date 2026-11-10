@@ -58,6 +58,7 @@ func _ready() -> void:
 	main.free()
 	await get_tree().process_frame
 	await _test_fever_show()
+	await _test_overlay_art()
 	await _test_auto_view()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
@@ -175,6 +176,63 @@ func _test_board_layout(main: Control) -> void:
 		if left or right:
 			labels_ok = labels_ok and label.position.y >= 48.0 and label.position.y + 21.0 <= 300.0
 	_check(label_count > 0 and labels_ok, "라인 라벨 33×21, 보드 바깥 (왼쪽 x=6 / 오른쪽 x=396 / 위쪽 y=9)")
+
+
+## 6-E: 피버·풀 오버레이가 새 그림(배경·배너·심볼 칸·동전)과 정해 둔 위치·크기로 만들어졌는지, 단계마다 맞는 것만 보이는지
+func _test_overlay_art() -> void:
+	var overlay: FeverOverlay = FeverOverlay.new()
+	add_child(overlay)
+	await get_tree().process_frame
+	_check(overlay.size == Vector2(640, 480) and overlay.mouse_filter == Control.MOUSE_FILTER_STOP, "오버레이: 입력은 화면 전체(640×480)를 막음")
+	var bg: TextureRect = overlay.get_node("BgFrame") as TextureRect
+	_check(bg.position == Vector2.ZERO and bg.size == Vector2(640, 414) and bg.texture.get_size() == Vector2(640, 414), "배경 프레임 640×414: 하단 표시창(y=414) 위까지만 덮음")
+	var fever_banner: TextureRect = overlay.get_node("BannerFever") as TextureRect
+	var pool_banner: TextureRect = overlay.get_node("BannerPool") as TextureRect
+	_check(fever_banner.size == Vector2(360, 84) and fever_banner.position == Vector2(138, 30), "FEVER! 배너 360×84 (138,30)")
+	_check(pool_banner.size == Vector2(408, 84) and pool_banner.position == Vector2(114, 30), "POOL GET! 배너 408×84 (114,30)")
+	var tile: TextureRect = overlay.get_node("SymbolTile") as TextureRect
+	_check(tile.position == Vector2(264, 132) and tile.size == Vector2(108, 84) and tile.get_node("SymbolIcon") != null, "심볼 칸 타일 108×84 (264,132) + 심볼 그림")
+	var plate: Panel = overlay.get_node("BonusPlate") as Panel
+	_check(plate.position == Vector2(66, 288) and plate.size == Vector2(504, 84), "BONUS 판 504×84 (66,288)")
+	var coins: Control = overlay.get_node("CoinRow") as Control
+	var coins_ok: bool = coins.get_child_count() == FeverOverlay.COIN_ROW_COUNT
+	for coin: Node in coins.get_children():
+		coins_ok = coins_ok and (coin as TextureRect).size == Vector2(24, 24) and (coin as TextureRect).texture is AtlasTexture
+	_check(coins_ok, "풀 단계 동전 줄: 동전 5개, 24×24 (크기는 6-F에서 조정)")
+	var hint: Label = null
+	for child: Node in overlay.get_children():
+		if child is Label and (child as Label).text == FeverOverlay.HINT_TEXT:
+			hint = child as Label
+	_check(hint != null and hint.position.y == 390.0 and hint.position.y + hint.size.y == 414.0, "건너뛰기 힌트 y=390 (그림 영역 맨 아래, 표시창을 가리지 않음)")
+	var ignores: bool = true
+	for node: Node in overlay.find_children("*", "Control", true, false):
+		ignores = ignores and (node as Control).mouse_filter == Control.MOUSE_FILTER_IGNORE
+	_check(ignores, "오버레이 안의 그림·글자는 모두 클릭 통과 (막는 것은 오버레이 본체뿐)")
+	# 피버 단계 → 풀 단계 (금액은 5자리·6자리까지 판 안에 들어가는지)
+	var steps: Array[Dictionary] = [
+		{ "kind": FeverOverlay.KIND_FEVER, "symbol": "SEVEN", "name": "세븐", "bonus": 123456 },
+		{ "kind": FeverOverlay.KIND_POOL, "symbol": "", "name": FeverOverlay.POOL_NAME_TEXT, "bonus": 12345 },
+	]
+	overlay.play(steps, 1.0, 0.3, 0.0, 1.0)
+	var label: Label = overlay.get_node("BonusPlate/BonusLabel") as Label
+	var name_label: Label = overlay.get_node("NameLabel") as Label
+	_check(bg.visible and fever_banner.visible and not pool_banner.visible and tile.visible and not coins.visible and name_label.visible, "피버 단계: FEVER! 배너·심볼 칸·이름 줄만 보임")
+	_check(overlay.shown_texts() == { "title": "FEVER!", "name": "세븐", "bonus": "BONUS +123456" }, "피버 단계 글자 FEVER! / 이름 / BONUS +금액")
+	_check(label.get_minimum_size().x <= plate.size.x, "피버 금액 6자리(BONUS +123456)가 판 안에 들어감 (%d / %d px)" % [label.get_minimum_size().x, plate.size.x])
+	overlay.advance(1.0)
+	_check(not overlay.is_showing_step() and bg.visible and not fever_banner.visible and not plate.visible, "단계 사이 간격: 배경만 보임")
+	overlay.advance(0.3)
+	_check(bg.visible and pool_banner.visible and not fever_banner.visible and not tile.visible and coins.visible and not name_label.visible and plate.visible, "풀 단계: POOL GET! 배너·동전 줄·금액 판만 보임 (이름 줄 없음)")
+	_check(overlay.shown_texts() == { "title": "POOL GET!", "name": "", "bonus": "POOL +12345" }, "풀 단계 글자 POOL GET! / 이름 없음 / POOL +금액")
+	_check(label.get_minimum_size().x <= plate.size.x, "풀 금액 5자리(POOL +12345, ×4)가 판 안에 들어감 (%d / %d px)" % [label.get_minimum_size().x, plate.size.x])
+	overlay.set_bg_frame(2)
+	overlay.set_banner_variant(1)
+	_check(overlay.get_node("BgFrame").texture.resource_path.ends_with("pool_bg_2.png") and pool_banner.texture.resource_path.ends_with("pool_banner_b.png"), "배경 프레임·배너 색 변형 바꾸기 (6-F용)")
+	overlay.skip()
+	_check(not overlay.visible and not bg.visible, "건너뛰기: 오버레이가 사라지고 배경도 숨음")
+	_check(CoinSheet.sheet().get_size() == Vector2(144, 24) and CoinSheet.FRAME_COUNT == 6 and CoinSheet.frame(7).region == CoinSheet.frame(1).region, "동전 시트 144×24, 6프레임 (번호는 순환)")
+	overlay.free()
+	await get_tree().process_frame
 
 
 ## 6-D: 벽지·프레임·로고가 있고, 모든 기존 요소보다 뒤에 그려지며, 기존 요소 위치는 그대로인지
@@ -1010,7 +1068,8 @@ func _fever_natural_run(data: BalanceData, n: int) -> Dictionary:
 				order_seen.append(step)
 			var texts: Dictionary = overlay.shown_texts()
 			if step >= expected.size():
-				if texts["title"] != "POOL GET!" or texts["name"] != "POOL" or texts["bonus"] != "POOL +%d" % result.pool_won:
+				# 6-E: 풀 단계는 이름 줄이 없다(배너·금액 판과 중복) → 보이는 이름 글자는 빈 글자
+				if texts["title"] != "POOL GET!" or texts["name"] != "" or texts["bonus"] != "POOL +%d" % result.pool_won:
 					text_errors += 1
 			else:
 				var step_symbol: String = expected[step]

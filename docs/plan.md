@@ -19,3 +19,28 @@
 - view_test: Wallpaper/Frame/TitleLogo 존재, 그리기 순서(벽지 < 프레임 < 보드), mouse_filter, 로고 크기, 기존 요소 위치 불변
 - 기존 테스트 전부 통과: logic 44, state 96, reel 71, view 274+, match 18
 - F5 확인 요청 → 커밋 제안(승인 후) → `docs/진행상황.md`, `CHANGELOG.md`(v0.11.0) 갱신
+
+---
+
+# 6-E 작업 계획 — FEVER! / POOL GET! 연출 아트 + 당첨 동전
+
+## 결정 사항 (사용자 승인)
+- 오버레이 범위 **B안**: 막·연출을 윗부분(아트 y 0~138 = 640×414 px)에만 깔고, 하단 CREDIT/WIN/BET 줄은 그대로 보임. 클릭 차단은 전체 화면 유지. 기획서 8장 "화면 전체" 문구 수정 승인.
+- 심볼: 큰 심볼 32×24 + 칸 타일(36×28). 풀 단계는 동전 줄.
+- 이름·금액은 갈무리14 글자(×3, 풀 금액 ×4). 새 비트맵은 배너 글자·장식·동전만.
+- 색: FEVER! = 빨강·주황, POOL GET! = 금색·초록. 동전 8×8, 6프레임.
+- 힌트(`SPACE: 건너뛰기`)는 y≈390으로 이동. `scenes/test/overlay_preview.tscn` 추가(balance.json은 건드리지 않음).
+- 연출 시간·규칙·입력 잠금·정산 시점은 그대로. `feel.json` 새 키 없음.
+
+## 6-E-1 이미지 생성 + 미리보기 (완료·승인, 게임 코드 변경 없음)
+- `tools/gen_pixel_assets.py`에 6-E 추가
+- 생성: `assets/ui/fever_banner_a/b.png`(120×28 아트 ×3), `pool_banner_a/b.png`(136×28), `fever_bg_0~2.png`, `pool_bg_0~2.png`(640×414), `coin_sheet.png`(48×8 아트 ×3 = 144×24)
+- 미리보기: `assets/_preview/6e_fever.png`, `6e_fever_seven_b.png`, `6e_pool.png`, `6e_pool_b.png`, `6e_overview.png`, `6e_coin_x6.png`
+- → 사용자 승인 대기
+
+## 6-E-2 화면 적용 (완료, F5 확인 대기)
+- `fever_overlay.gd`: 임시 Label/Panel → 배너(`BannerFever`/`BannerPool`)·배경(`BgFrame`)·심볼 타일·BONUS 판. 막·배경은 y 0~414만. 힌트 y≈390. 위치·프레임 수는 상수로 노출.
+- 새 `scripts/view/coin_sheet.gd`: 동전 시트 경로·프레임 크기·프레임 수·프레임 텍스처 (6-F용)
+- 새 `scenes/test/overlay_preview.tscn`: 가짜 단계(체리→포도→벨→세븐→풀)로 연출만 재생, 키로 단계·색 변형 전환
+- `docs/기획서.md` 8장 문구, `docs/진행상황.md`, `CHANGELOG.md`(v0.12.0)
+- 테스트: `shown_texts()` 값 불변, 이미지 사용, 노드 이름·크기·위치, 클릭 차단 유지, 하단 표시창 위에 막 없음, 동전 시트 크기·프레임 수, 기존 요소 위치 불변, 기존 전 테스트 통과
