@@ -37,6 +37,7 @@ func _ready() -> void:
 	_rng.seed = TEST_SEED
 	var main_scene: PackedScene = load("res://scenes/main.tscn")
 	var main: Control = main_scene.instantiate()
+	main.settle_presentation = false
 	add_child(main)
 	# 시간은 테스트가 main.advance()로 직접 흘린다.
 	main.set_process(false)
@@ -63,6 +64,7 @@ func _ready() -> void:
 	await _test_bgm()
 	await _test_bulbs()
 	await _test_auto_view()
+	await _test_settle_show()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -542,7 +544,7 @@ func _test_sound_basics() -> void:
 	var files_ok: bool = true
 	for sound_name: StringName in SoundBank.ALL_NAMES:
 		files_ok = files_ok and ResourceLoader.exists(SoundBank.sound_path(sound_name))
-	_check(files_ok and SoundBank.ALL_NAMES.size() == 14, "효과음 파일 14개가 모두 있음 (assets/sounds/*.wav)")
+	_check(files_ok and SoundBank.ALL_NAMES.size() == 15, "효과음 파일 15개가 모두 있음 (assets/sounds/*.wav, tick 포함)")
 	var main: Control = await _auto_main(5, 1000, 8)
 	var bank: SoundBank = main.sound_bank()
 	_check(bank != null and main.get_node("SoundBank") == bank, "main 안에 SoundBank 노드")
@@ -1526,6 +1528,7 @@ func _fever_world(data: BalanceData, n: int) -> Control:
 	for i: int in n:
 		GameState.play_spin()
 	var main: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	main.settle_presentation = false
 	add_child(main)
 	main.set_process(false)
 	await get_tree().process_frame
@@ -1753,6 +1756,7 @@ func _auto_main(rng_seed: int, credit: int, total_bet: int) -> Control:
 	while GameState.bet != total_bet:
 		GameState.raise_bet()
 	var main: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	main.settle_presentation = false
 	add_child(main)
 	main.set_process(false)
 	await get_tree().process_frame
@@ -1924,6 +1928,244 @@ func _test_auto_with_fever() -> void:
 	_check(not GameState.spinning, "연출이 끝난 뒤 대기시간 전에는 다음 판이 시작되지 않음")
 	_advance_for(main, 0.3)
 	_check(GameState.spinning and GameState.auto_count() == 2, "연출이 끝난 뒤 대기시간이 지나면 다음 판 시작")
+	GameState.stop_auto(AutoSpin.REASON_USER)
+	main.free()
+	await get_tree().process_frame
+
+
+# ---------------------------------------------------------------- 6-F3b 정산 연출
+
+## 정산 연출이 켜진(기본값) main. 크레딧은 넉넉히 둔다.
+func _settle_main(rng_seed: int, credit: int, total_bet: int) -> Control:
+	GameState.initialize(GameState.get_balance(), GameState.load_economy(), rng_seed)
+	GameState.credit = credit
+	while GameState.bet != total_bet:
+		GameState.raise_bet()
+	var main: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	add_child(main)
+	main.set_process(false)
+	await get_tree().process_frame
+	GameState.refresh()
+	return main
+
+
+## START부터 정산 연출이 시작될 때까지 흘린다 (피버 연출은 끝까지 본다). 시작했으면 true, 당첨 없이 끝났으면 false.
+func _run_to_settle_show(main: Control) -> bool:
+	main.do_spin()
+	var guard: int = 0
+	while guard < 9000:
+		main.advance(FRAME_DT)
+		guard += 1
+		if main.settle_active():
+			return true
+		if not GameState.spinning and not main.fever_playing():
+			return false
+	return false
+
+
+func _find_settle_show(main: Control, tries: int) -> bool:
+	for i: int in tries:
+		if _run_to_settle_show(main):
+			return true
+	return false
+
+
+func _test_settle_show() -> void:
+	_test_settle_unit()
+	_test_settle_feel_keys()
+	await _test_settle_main_flow()
+	await _test_settle_interrupts()
+	await _test_settle_auto()
+	GameState.initialize(BalanceData.load_from_file(), GameState.load_economy(), TEST_SEED)
+
+
+func _test_settle_feel_keys() -> void:
+	var defaults: FeelConfig = FeelConfig.from_dict({})
+	_check(defaults.countup_small_sec == 0.6 and defaults.countup_mid_sec == 1.2 and defaults.countup_big_sec == 2.5, "카운트업 시간 기본값 소 0.6 / 중 1.2 / 대 2.5")
+	_check(defaults.coin_count(FeelConfig.TIER_SMALL) == 3 and defaults.coin_count(FeelConfig.TIER_MID) == 6 and defaults.coin_count(FeelConfig.TIER_BIG) == 12, "동전 개수 기본값 소 3 / 중 6 / 대 12")
+	_check(defaults.coin_fly_sec == 0.45 and defaults.auto_effect_scale == 0.5 and defaults.countup_tick_sec == 0.05, "동전 비행 0.45 / AUTO 배율 0.5 / 틱 간격 0.05")
+	_check(defaults.countup_sec(FeelConfig.TIER_MID) == 1.2 and defaults.countup_sec(FeelConfig.TIER_BIG) == 2.5, "countup_sec(단계) 조회")
+	var bad: FeelConfig = FeelConfig.from_dict({"countup_big_sec": 99, "coin_count_mid": 0, "auto_effect_scale": 2})
+	_check(bad.countup_big_sec == 2.5 and bad.coin_count(FeelConfig.TIER_MID) == 6 and bad.auto_effect_scale == 0.5, "범위 밖 값은 기본값으로 대체")
+	var from_file: FeelConfig = FeelConfig.load_from_file(FeelConfig.DEFAULT_PATH, false)
+	_check(from_file.file_ok and from_file.errors.is_empty(), "feel.json이 새 키 포함해서 오류 없이 읽힘")
+
+
+func _test_settle_unit() -> void:
+	var show: SettleShow = SettleShow.new()
+	add_child(show)
+	var counts: Dictionary = {"tick": 0, "land": 0, "fin": 0}
+	show.tick.connect(func() -> void: counts["tick"] += 1)
+	show.coin_landed.connect(func() -> void: counts["land"] += 1)
+	show.finished.connect(func() -> void: counts["fin"] += 1)
+	show.start(100, 500, 1.0, 4, 0.5, 0.1, Vector2(400, 0), Vector2(0, 0))
+	_check(show.is_active() and show.win_shown() == 0 and show.credit_shown() == 500, "시작: WIN 0, CREDIT은 정산 전 값")
+	_check(is_equal_approx(show.total_sec(), 1.5) and show.coin_count() == 4 and show.credit_final() == 600, "총 시간 = 카운트업 + 비행, 동전 4개, 최종 600")
+	show.advance(0.5)
+	_check(show.win_shown() == 50, "카운트업 절반 → WIN 50")
+	_check(show.flying_count() == 2 and show.landed_count() == 0 and show.credit_shown() == 500, "동전 2개 비행 중, 아직 도착 없음 → CREDIT 그대로")
+	var coin0: TextureRect = show.get_node("Coin0")
+	_check(coin0.position.is_equal_approx(Vector2(200.0 - 12.0, -SettleShow.COIN_ARC_PX - 12.0)), "동전은 포물선: 중간 지점에서 가장 높이(%.0fpx) 솟음" % SettleShow.COIN_ARC_PX)
+	show.advance(0.3)
+	_check(show.landed_count() == 1 and show.credit_shown() == 525 and counts["land"] == 1, "동전 1개 도착 → CREDIT +25")
+	show.advance(0.8)
+	_check(not show.is_active() and show.win_shown() == 100 and show.credit_shown() == 600, "끝: WIN 100, CREDIT 600 (최종값과 정확히 일치)")
+	_check(counts["land"] == 4 and counts["fin"] == 1 and counts["tick"] > 0 and show.flying_count() == 0, "동전 4번 도착 / 끝 알림 1번 / 틱 소리 있음 / 남은 동전 없음")
+	# 나머지는 마지막 동전이 더한다
+	show.start(10, 0, 0.6, 3, 0.45, 0.05, Vector2.ZERO, Vector2(100, 0))
+	var shares: Array[int] = [show.coin_share(0), show.coin_share(1), show.coin_share(2)]
+	_check(shares == [3, 3, 4], "10을 동전 3개로: 3 + 3 + 4 (마지막 동전이 나머지)")
+	for i: int in 200:
+		show.advance(0.01)
+	_check(show.credit_shown() == 10 and not show.is_active(), "나머지 포함 CREDIT이 정확히 최종값")
+	# 동전 수는 당첨금을 넘지 않는다 + 건너뛰기
+	show.start(2, 40, 1.0, 12, 0.5, 0.05, Vector2.ZERO, Vector2(100, 0))
+	_check(show.coin_count() == 2, "당첨금 2이면 동전 2개로 줄임")
+	show.advance(0.2)
+	var lands_before: int = counts["land"]
+	var ticks_before: int = counts["tick"]
+	show.finish_now()
+	_check(not show.is_active() and show.win_shown() == 2 and show.credit_shown() == 42, "건너뛰기: 바로 최종값 (WIN 2, CREDIT 42)")
+	_check(counts["land"] == lands_before and counts["tick"] == ticks_before, "건너뛰기에는 소리(틱·도착)가 나지 않음")
+	var fin_before: int = counts["fin"]
+	show.finish_now()
+	show.advance(5.0)
+	_check(counts["fin"] == fin_before and show.credit_shown() == 42, "끝난 뒤 건너뛰기·시간 진행은 아무 영향 없음")
+	show.free()
+
+
+func _test_settle_main_flow() -> void:
+	var main: Control = await _settle_main(31, 100000, FULL_BET)
+	_check(main.settle_presentation and not main.settle_active(), "정산 연출 기본값 켜짐, 처음엔 재생 중 아님")
+	_check(main.get_node("SettleShow") == main.settle_show() and main.settle_show().mouse_filter == Control.MOUSE_FILTER_IGNORE, "SettleShow 노드: 클릭 통과")
+	_check(main.get_node("SettleShow").get_index() < main.get_node("FeverOverlay").get_index(), "그리기 순서: SettleShow가 피버 오버레이보다 아래")
+	var bank: SoundBank = main.sound_bank()
+	var found: bool = _find_settle_show(main, 400)
+	_check(found, "(준비) 당첨 정산 연출이 시작됨")
+	if not found:
+		main.free()
+		await get_tree().process_frame
+		return
+	var show: SettleShow = main.settle_show()
+	var payout: int = GameState.last_win
+	var final_credit: int = GameState.credit
+	var base_credit: int = final_credit - payout
+	_check(show.credit_final() == final_credit, "연출의 최종 CREDIT == 로직 크레딧")
+	_check(_box(main, "WinBox").value_text() == "0" and _box(main, "CreditBox").value_text() == str(base_credit), "정산 직후: WIN 0 / CREDIT은 당첨금 더하기 전 값을 표시 (로직 값은 이미 최종)")
+	_check(_notice(main).contains("당첨 %d =" % payout), "메시지 칸은 정산 즉시 최종 당첨금을 표시")
+	_check(GameState.credit == final_credit and GameState.last_win == payout, "연출 중에도 로직 값은 최종값 그대로")
+	bank.clear_requests()
+	var total: float = show.total_sec()
+	_advance_for(main, total * 0.4)
+	var win_mid: int = int(_box(main, "WinBox").value_text())
+	_check(win_mid < payout or payout == 1, "카운트업 도중: WIN(%d)이 최종(%d)보다 작음" % [win_mid, payout])
+	_check(int(_box(main, "CreditBox").value_text()) <= final_credit, "도중 CREDIT이 최종을 넘지 않음")
+	_advance_for(main, total)
+	_check(not main.settle_active(), "연출이 끝남")
+	_check(_box(main, "WinBox").value_text() == str(payout) and _box(main, "CreditBox").value_text() == str(final_credit), "끝난 뒤 WIN·CREDIT == 최종값 (정확히)")
+	_check(show.landed_count() == show.coin_count(), "동전이 모두 도착")
+	_check(bank.requests().count(SoundBank.NAME_TICK) >= show.coin_count(), "틱 소리: 동전 도착마다 + 카운트업 증가 때 (%d번)" % bank.requests().count(SoundBank.NAME_TICK))
+	main.free()
+	await get_tree().process_frame
+	# 정산 연출을 끈 main은 숫자가 바로 반영된다
+	var off: Control = await _settle_main(31, 100000, FULL_BET)
+	off.settle_presentation = false
+	var found_off: bool = _find_settle_show(off, 3)
+	_check(not found_off and not off.settle_active(), "settle_presentation=false: 연출이 시작되지 않음")
+	_check(_box(off, "CreditBox").value_text() == str(GameState.credit) and _box(off, "WinBox").value_text() == str(GameState.last_win), "settle_presentation=false: 숫자 즉시 반영")
+	off.free()
+	await get_tree().process_frame
+
+
+## 연출이 시작된 상태의 main을 준비한다. 못 찾으면 null.
+func _settle_started_main(rng_seed: int) -> Control:
+	var main: Control = await _settle_main(rng_seed, 100000, FULL_BET)
+	if _find_settle_show(main, 400):
+		return main
+	main.free()
+	await get_tree().process_frame
+	return null
+
+
+func _test_settle_interrupts() -> void:
+	# START: 최종값으로 확정하고 바로 다음 판 시작
+	var main: Control = await _settle_started_main(41)
+	_check(main != null, "(준비) START 중단용 연출")
+	if main != null:
+		var show: SettleShow = main.settle_show()
+		var last: Dictionary = {"win": -1, "credit": -1}
+		show.win_shown_changed.connect(func(v: int) -> void: last["win"] = v)
+		show.credit_shown_changed.connect(func(v: int) -> void: last["credit"] = v)
+		var payout: int = GameState.last_win
+		var final_credit: int = GameState.credit
+		_advance_for(main, 0.1)
+		var started: SpinResult = main.do_spin()
+		_check(started != null and GameState.spinning and not main.settle_active(), "연출 중 START: 연출 종료 + 다음 판 바로 시작")
+		_check(last["win"] == payout and last["credit"] == final_credit, "START 직전에 숫자를 최종값(WIN %d / CREDIT %d)으로 확정" % [payout, final_credit])
+		_check(_box(main, "CreditBox").value_text() == str(GameState.credit) and _box(main, "WinBox").value_text() == "0", "새 판: CREDIT은 베팅 차감 값, WIN 0")
+		# 연타: 이어지는 START는 회전 중 START(남은 릴 정지)로 처리되어 문제 없이 한 판이 끝남
+		main.do_spin()
+		main.do_spin()
+		var guard: int = 0
+		while GameState.spinning and guard < 9000:
+			main.advance(FRAME_DT)
+			guard += 1
+		_check(not GameState.spinning, "START 연타 뒤에도 판이 정상적으로 끝남")
+		main.free()
+		await get_tree().process_frame
+	# COIN: 연출 숫자를 먼저 확정한 뒤 크레딧 추가
+	main = await _settle_started_main(41)
+	if main != null:
+		var show2: SettleShow = main.settle_show()
+		var last2: Dictionary = {"credit": -1}
+		show2.credit_shown_changed.connect(func(v: int) -> void: last2["credit"] = v)
+		var final2: int = GameState.credit
+		_advance_for(main, 0.1)
+		GameState.insert_coin()
+		_check(not main.settle_active() and last2["credit"] == final2, "연출 중 COIN: 먼저 최종값 확정")
+		_check(_box(main, "CreditBox").value_text() == str(GameState.credit) and GameState.credit == final2 + GameState.coin_amount, "COIN 반영 후 CREDIT == 최종 + 투입량")
+		_check(_box(main, "WinBox").value_text() == str(GameState.last_win), "COIN 뒤에도 WIN은 이번 판 당첨금 유지")
+		main.free()
+		await get_tree().process_frame
+
+
+func _test_settle_auto() -> void:
+	var main: Control = await _settle_main(51, 100000, FULL_BET)
+	var found: bool = false
+	GameState.start_auto()
+	var guard: int = 0
+	while guard < 60000:
+		main.advance(FRAME_DT)
+		guard += 1
+		if main.settle_active() and GameState.auto_on:
+			found = true
+			break
+		if not GameState.auto_on:
+			GameState.start_auto()
+	_check(found, "(준비) AUTO 중 정산 연출이 시작됨")
+	if not found:
+		GameState.stop_auto(AutoSpin.REASON_USER)
+		main.free()
+		await get_tree().process_frame
+		return
+	var show: SettleShow = main.settle_show()
+	var feel: FeelConfig = main.feel()
+	var tier: int = main._settle_tier(main._last_result)
+	var expected: float = (feel.countup_sec(tier) + feel.coin_fly_sec) * feel.auto_effect_scale
+	_check(is_equal_approx(show.total_sec(), expected), "AUTO 중 연출 시간은 배율(%.1f)만큼 짧음: %.2f초" % [feel.auto_effect_scale, expected])
+	var count: int = GameState.auto_count()
+	var frames: int = 0
+	var leaked: bool = false
+	while main.settle_active() and frames < 6000:
+		main.advance(FRAME_DT)
+		frames += 1
+		if main.settle_active() and (GameState.spinning or GameState.auto_count() != count):
+			leaked = true
+	_check(not leaked and GameState.auto_on, "연출이 도는 동안 AUTO 대기가 흐르지 않고 새 판도 없음")
+	_advance_for(main, feel.auto_spin_gap_sec - 0.15)
+	_check(not GameState.spinning and GameState.auto_count() == count, "연출이 끝난 뒤부터 대기시간을 셈: 대기 전에는 다음 판 없음")
+	_advance_for(main, 0.3)
+	_check(GameState.spinning and GameState.auto_count() == count + 1, "대기시간이 지나면 다음 판 시작")
 	GameState.stop_auto(AutoSpin.REASON_USER)
 	main.free()
 	await get_tree().process_frame

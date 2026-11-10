@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 0.16.0 — 2026-11-10 (6-F3b: 정산 연출 + AUTO 대기)
+
+### 추가
+- 정산 연출 `SettleShow`(`scripts/view/settle_show.gd`): 당첨이 있으면 WIN 숫자가 0에서 최종값까지 올라가고(소 0.6 / 중 1.2 / 대 2.5초), 동전(소 3 / 중 6 / 대 12개, `CoinSheet` 재사용)이 WIN 칸에서 CREDIT 칸으로 포물선(0.45초)으로 날아가 도착할 때마다 CREDIT이 오름. 마지막 동전이 나머지를 더해 최종값과 정확히 일치
+- 효과음 `tick.wav`(0.02초, `tools/gen_sounds.py`로 합성): 카운트업 숫자가 오를 때와 동전 도착 때 재생. 연출을 건너뛸 때는 소리 없음
+- `feel.json` 새 키 9개: `countup_small_sec` `countup_mid_sec` `countup_big_sec` `countup_tick_sec` `coin_count_small` `coin_count_mid` `coin_count_big` `coin_fly_sec` `auto_effect_scale`. 설명은 `docs/feel.md`
+- `main.settle_presentation`(기본 true): false면 연출 없이 숫자를 바로 반영 (기존 테스트용)
+- `sound_preview`에 T 키(tick)
+- view_test +49: SettleShow 단독(시간·포물선·나머지 처리·동전 수 상한·건너뛰기 무음), feel 키, 연출 중 WIN/CREDIT 표시, START·COIN 중단, AUTO 연출 시간·대기 시작 시점
+
+### 변경
+- 연출 중 START: 숫자를 최종값으로 확정하고 바로 다음 판 시작. COIN 등 다른 이유로 크레딧이 바뀌어도 연출 숫자를 먼저 최종값으로 확정
+- AUTO: 정산 연출이 도는 동안 대기시간을 세지 않고, 연출이 끝난 뒤부터 센다. AUTO 중 연출 시간은 `auto_effect_scale`(0.5)배
+- 피버·풀 정산 직후 피버 전구 모양의 지속 시간을 고정 1.5초에서 정산 연출 시간으로 바꿈 (연출이 없으면 기존 1.5초)
+- 메시지 칸의 "당첨 N = 라인 + 피버 + 풀"은 정산 즉시 최종 숫자로 표시 (변경 없음)
+- 로직, GameState, balance.json, project.godot, 기존 요소 좌표 변경 없음
+
 ## 0.15.0 — 2026-11-10 (6-F3a: 전구 애니메이션)
 
 ### 추가

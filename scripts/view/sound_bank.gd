@@ -33,10 +33,12 @@ const NAME_FEVER_END: StringName = &"fever_end"
 const NAME_POOL_GET: StringName = &"pool_get"
 const NAME_BUTTON: StringName = &"button"
 const NAME_GAMEOVER: StringName = &"gameover"
+## 정산 카운트업 증가·동전 도착 (6-F3b)
+const NAME_TICK: StringName = &"tick"
 const ALL_NAMES: Array[StringName] = [
 	NAME_COIN, NAME_BET, NAME_CANCEL, NAME_START, NAME_REEL_SPIN, NAME_REEL_STOP,
 	NAME_WIN_SMALL, NAME_WIN_MID, NAME_WIN_BIG, NAME_FEVER_START, NAME_FEVER_END,
-	NAME_POOL_GET, NAME_BUTTON, NAME_GAMEOVER,
+	NAME_POOL_GET, NAME_BUTTON, NAME_GAMEOVER, NAME_TICK,
 ]
 ## 반복해서 재생하는 소리
 const LOOP_NAMES: Array[StringName] = [NAME_REEL_SPIN]

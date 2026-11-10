@@ -3,7 +3,7 @@
 실행: python tools/gen_sounds.py      (표준 라이브러리만 사용, 시드 고정이라 항상 같은 파일이 나온다)
 만드는 것: assets/sounds/*.wav (44.1kHz 16bit 모노, 8비트 칩튠 스타일)
   coin / bet / cancel / start / reel_spin(반복) / reel_stop / win_small / win_mid / win_big /
-  fever_start / fever_end / pool_get / button / gameover
+  fever_start / fever_end / pool_get / button / gameover / tick(6-F3b)
 규칙: 직접 합성한 소리만 쓴다(외부 녹음·원작 소리 없음). 파일마다 GAIN으로 볼륨 균형을 맞춘다.
 """
 import math
@@ -33,7 +33,7 @@ def hz(name):
 GAIN = {
     "coin": 0.60, "bet": 0.45, "cancel": 0.55, "start": 0.60, "reel_spin": 0.30, "reel_stop": 0.60,
     "win_small": 0.60, "win_mid": 0.70, "win_big": 0.80, "fever_start": 0.75, "fever_end": 0.65,
-    "pool_get": 0.85, "button": 0.40, "gameover": 0.60,
+    "pool_get": 0.85, "button": 0.40, "gameover": 0.60, "tick": 0.35,
 }
 
 
@@ -200,6 +200,11 @@ def button():
     return note(900.0, 0.022, "pulse", 0.5, 0.7, attack=0.001, decay=4.0)
 
 
+def tick():
+    """정산 카운트업·동전 도착용 짧은 틱 (0.02초). 자주 나므로 작고 건조하게"""
+    return note(1500.0, 0.02, "pulse", 0.5, 0.8, attack=0.0005, decay=4.0)
+
+
 def gameover():
     names = ["G4", "E4", "C4", "G3"]
     parts = []
@@ -213,6 +218,7 @@ SOUNDS = {
     "coin": coin, "bet": bet, "cancel": cancel, "start": start, "reel_spin": reel_spin, "reel_stop": reel_stop,
     "win_small": win_small, "win_mid": win_mid, "win_big": win_big, "fever_start": fever_start,
     "fever_end": fever_end, "pool_get": pool_get, "button": button, "gameover": gameover,
+    "tick": tick,
 }
 
 

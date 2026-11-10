@@ -16,9 +16,10 @@ const KEY_SOUNDS: Dictionary = {
 	KEY_P: SoundBank.NAME_POOL_GET,
 	KEY_B: SoundBank.NAME_BUTTON,
 	KEY_G: SoundBank.NAME_GAMEOVER,
+	KEY_T: SoundBank.NAME_TICK,
 }
 const VOLUME_STEP_DB: float = 3.0
-const HELP_TEXT: String = "[효과음 확인] 키 하나에 소리 하나\n1 coin  2 bet  3 cancel  4 start  5 reel_stop\n6 win_small  7 win_mid  8 win_big\n9 fever_start  0 fever_end  P pool_get\nB button  G gameover(파일만, 게임에는 아직 연결 안 함)\nL 릴 회전음(반복) 켜기/끄기   S 재생 중인 소리 끊기\n- / = SFX 볼륨 낮추기/높이기 (3dB씩)\n\n볼륨: %.0f dB"
+const HELP_TEXT: String = "[효과음 확인] 키 하나에 소리 하나\n1 coin  2 bet  3 cancel  4 start  5 reel_stop\n6 win_small  7 win_mid  8 win_big\n9 fever_start  0 fever_end  P pool_get\nB button  T tick(정산 카운트업·동전 도착)\nG gameover(파일만, 게임에는 아직 연결 안 함)\nL 릴 회전음(반복) 켜기/끄기   S 재생 중인 소리 끊기\n- / = SFX 볼륨 낮추기/높이기 (3dB씩)\n\n볼륨: %.0f dB"
 const HELP_RECT: Rect2 = Rect2(16, 16, 608, 400)
 
 var _bank: SoundBank

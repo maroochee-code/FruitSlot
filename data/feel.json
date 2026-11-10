@@ -30,5 +30,14 @@
 	"bulb_idle_sec": 0.8,
 	"bulb_spin_step_sec": 0.06,
 	"bulb_win_flash_sec": 0.12,
-	"bulb_fever_sec": 0.2
+	"bulb_fever_sec": 0.2,
+	"countup_small_sec": 0.6,
+	"countup_mid_sec": 1.2,
+	"countup_big_sec": 2.5,
+	"countup_tick_sec": 0.05,
+	"coin_count_small": 3,
+	"coin_count_mid": 6,
+	"coin_count_big": 12,
+	"coin_fly_sec": 0.45,
+	"auto_effect_scale": 0.5
 }

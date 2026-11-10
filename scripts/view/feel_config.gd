@@ -36,7 +36,20 @@ const SPECS: Dictionary = {
 	"bulb_spin_step_sec": [0.06, 0.01, 1.0],
 	"bulb_win_flash_sec": [0.12, 0.02, 1.0],
 	"bulb_fever_sec": [0.2, 0.02, 2.0],
+	"countup_small_sec": [0.6, 0.05, 10.0],
+	"countup_mid_sec": [1.2, 0.05, 10.0],
+	"countup_big_sec": [2.5, 0.05, 10.0],
+	"countup_tick_sec": [0.05, 0.02, 0.5],
+	"coin_count_small": [3.0, 1.0, 40.0],
+	"coin_count_mid": [6.0, 1.0, 40.0],
+	"coin_count_big": [12.0, 1.0, 40.0],
+	"coin_fly_sec": [0.45, 0.05, 3.0],
+	"auto_effect_scale": [0.5, 0.1, 1.0],
 }
+## 정산 연출 크기 단계 (당첨 효과음 소/중/대와 같은 기준)
+const TIER_SMALL: int = 0
+const TIER_MID: int = 1
+const TIER_BIG: int = 2
 ## 릴 수만큼 값이 들어가는 항목. 키: [기본값 목록, 최솟값, 최댓값]
 const REEL_COUNT: int = 3
 const ARRAY_SPECS: Dictionary = {
@@ -109,6 +122,20 @@ var bulb_spin_step_sec: float = 0.06
 var bulb_win_flash_sec: float = 0.12
 ## 전구: 피버·풀 정산 때 노랑/빨강이 바뀌는 시간 (초)
 var bulb_fever_sec: float = 0.2
+## 정산 연출(6-F3b): WIN 숫자가 0에서 최종값까지 올라가는 시간 (초). 당첨 크기별
+var countup_small_sec: float = 0.6
+var countup_mid_sec: float = 1.2
+var countup_big_sec: float = 2.5
+## 카운트업 틱 소리 최소 간격 (초)
+var countup_tick_sec: float = 0.05
+## 정산 때 WIN 칸에서 CREDIT 칸으로 날아가는 동전 개수. 당첨 크기별 (정수로 읽음)
+var coin_count_small: float = 3.0
+var coin_count_mid: float = 6.0
+var coin_count_big: float = 12.0
+## 동전 한 개가 날아가는 시간 (초)
+var coin_fly_sec: float = 0.45
+## AUTO 중 정산 연출 시간에 곱하는 배율 (1이면 AUTO도 같은 속도)
+var auto_effect_scale: float = 0.5
 ## 파일에서 읽다가 문제가 있어 기본값으로 대체한 항목 설명
 var errors: PackedStringArray = PackedStringArray()
 ## 파일을 읽고 JSON으로 해석하는 데 성공했는지 (항목별 범위 문제와는 별개)
@@ -215,6 +242,26 @@ func _check_bgm_loop() -> void:
 	errors.append("bgm_loop_fade_sec(%s)가 bgm_loop_trim_sec(%s)보다 클 수 없어서 둘 다 기본값 사용" % [bgm_loop_fade_sec, bgm_loop_trim_sec])
 	bgm_loop_trim_sec = SPECS["bgm_loop_trim_sec"][0]
 	bgm_loop_fade_sec = SPECS["bgm_loop_fade_sec"][0]
+
+
+## 당첨 크기 단계(TIER_*)별 카운트업 시간 (초)
+func countup_sec(tier: int) -> float:
+	match tier:
+		TIER_BIG:
+			return countup_big_sec
+		TIER_MID:
+			return countup_mid_sec
+	return countup_small_sec
+
+
+## 당첨 크기 단계(TIER_*)별 동전 개수
+func coin_count(tier: int) -> int:
+	match tier:
+		TIER_BIG:
+			return roundi(coin_count_big)
+		TIER_MID:
+			return roundi(coin_count_mid)
+	return roundi(coin_count_small)
 
 
 func _longest_delay() -> float:

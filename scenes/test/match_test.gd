@@ -140,6 +140,7 @@ func _make_screen(data: BalanceData) -> Control:
 	while GameState.bet != FULL_BET:
 		GameState.raise_bet()
 	var main: Control = (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	main.settle_presentation = false
 	add_child(main)
 	main.set_process(false)
 	await get_tree().process_frame

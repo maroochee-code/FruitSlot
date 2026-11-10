@@ -124,6 +124,12 @@ var _bgm: BgmPlayer
 var _skipping_fever: bool = false
 ## 소리를 낼 때 쓰는 "AUTO가 켜져 있던가" (판마다 오는 auto_changed에는 소리를 내지 않는다)
 var _auto_sound_on: bool = false
+## 정산 연출 (6-F3b). false면 정산 숫자를 연출 없이 바로 반영한다 (기존 테스트용).
+## 켜져 있으면 WIN·CREDIT 표시 숫자가 로직 값과 잠시 달라지고, 연출이 끝나면(또는 건너뛰면) 같아진다.
+var settle_presentation: bool = true
+var _settle: SettleShow
+## GameState.settle_spin()을 부르는 동안 true (이때 오는 크레딧·WIN 변화는 연출이 대신 보여 준다)
+var _in_settle_call: bool = false
 
 
 func _ready() -> void:
@@ -143,6 +149,7 @@ func _ready() -> void:
 	_build_info_boxes()
 	_build_buttons()
 	_build_stop_buttons()
+	_build_settle_show()
 	_build_debug()
 	_build_sound()
 	_connect_state()
@@ -199,6 +206,7 @@ func _announce_feel(message: String) -> void:
 ## 시간을 delta초 진행한다. 릴 움직임, 자동 정지, 정산 대기를 처리한다. (테스트는 이걸 직접 부른다.)
 func advance(delta: float) -> void:
 	_bgm.advance(delta)
+	_settle.advance(delta)
 	_advance_bulbs(delta)
 	_advance_blink(delta)
 	if _spin.is_active():
@@ -211,7 +219,9 @@ func advance(delta: float) -> void:
 		_settle_left -= delta
 		if _settle_left <= 0.0:
 			_settle_now()
-	GameState.auto_advance(delta)
+	# AUTO 대기는 정산 연출이 끝난 뒤부터 센다 (연출 중에는 시간을 흘리지 않는다)
+	if not _settle.is_active():
+		GameState.auto_advance(delta)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -317,6 +327,8 @@ func do_spin() -> SpinResult:
 		_fever_overlay.skip()
 		_skipping_fever = false
 		return null
+	# 정산 연출 중 START: 숫자를 최종값으로 확정하고 이어서 다음 판을 시작한다
+	confirm_settle_show()
 	if GameState.spinning:
 		if _spin.press_quick_stop():
 			_refresh_buttons()
@@ -420,7 +432,11 @@ func _connect_state() -> void:
 
 
 func _on_credit_changed(credit: int) -> void:
-	_credit_box.set_value(str(credit))
+	# 정산 때가 아닌 변화(COIN·다음 판 차감 등)가 연출 도중에 오면 연출 숫자를 먼저 최종값으로 확정한다
+	if not _in_settle_call:
+		confirm_settle_show()
+	if not _holds_settle_numbers():
+		_credit_box.set_value(str(credit))
 	_refresh_buttons()
 	_refresh_notice()
 
@@ -435,7 +451,64 @@ func _on_bet_changed(total_bet: int, line_bets: PackedInt32Array) -> void:
 
 
 func _on_win_changed(win: int) -> void:
-	_win_box.set_value(str(win))
+	if not _in_settle_call:
+		confirm_settle_show()
+	if not _holds_settle_numbers():
+		_win_box.set_value(str(win))
+
+
+## 정산 호출 중이고 연출이 켜져 있으면, 크레딧·WIN 숫자 반영은 연출이 맡는다
+func _holds_settle_numbers() -> bool:
+	return _in_settle_call and settle_presentation
+
+
+## GameState.settle_spin()을 부르고, 당첨이 있으면 정산 연출을 시작한다
+func _settle_game() -> void:
+	_in_settle_call = true
+	var result: SpinResult = GameState.settle_spin()
+	_in_settle_call = false
+	if result == null or not settle_presentation or result.total_payout() <= 0:
+		return
+	_start_settle_show(result)
+
+
+func _start_settle_show(result: SpinResult) -> void:
+	var tier: int = _settle_tier(result)
+	var scale: float = _feel.auto_effect_scale if GameState.auto_on else 1.0
+	var payout: int = result.total_payout()
+	_settle.start(payout, GameState.credit - payout, _feel.countup_sec(tier) * scale, _feel.coin_count(tier), _feel.coin_fly_sec * scale, _feel.countup_tick_sec, WIN_RECT.get_center(), CREDIT_RECT.get_center())
+
+
+## 당첨 크기 단계 (당첨 효과음 소/중/대와 같은 기준)
+func _settle_tier(result: SpinResult) -> int:
+	var sound_name: StringName = SoundBank.win_sound_for(result.total_payout(), result.total_bet, _feel.win_mid_ratio, _feel.win_big_ratio)
+	if sound_name == SoundBank.NAME_WIN_BIG:
+		return FeelConfig.TIER_BIG
+	if sound_name == SoundBank.NAME_WIN_MID:
+		return FeelConfig.TIER_MID
+	return FeelConfig.TIER_SMALL
+
+
+## 정산 연출 중이면 건너뛰고 WIN·CREDIT를 최종값으로 확정한다. 연출 중이 아니면 아무것도 하지 않는다.
+func confirm_settle_show() -> void:
+	_settle.finish_now()
+
+
+## 정산 연출이 재생 중인가 (테스트용)
+func settle_active() -> bool:
+	return _settle.is_active()
+
+
+func settle_show() -> SettleShow:
+	return _settle
+
+
+func _on_settle_win_shown(value: int) -> void:
+	_win_box.set_value(str(value))
+
+
+func _on_settle_credit_shown(value: int) -> void:
+	_credit_box.set_value(str(value))
 
 
 func _on_auto_changed(enabled: bool, _count: int) -> void:
@@ -531,7 +604,7 @@ func _settle_now() -> void:
 		var win_name: StringName = SoundBank.win_sound_for(_last_result.total_payout(), _last_result.total_bet, _feel.win_mid_ratio, _feel.win_big_ratio)
 		if win_name != &"":
 			_sound.play(win_name)
-		GameState.settle_spin()
+		_settle_game()
 		return
 	_start_fever_show()
 
@@ -574,14 +647,15 @@ func _on_fever_step_started(index: int) -> void:
 
 func _on_fever_finished(skipped: bool) -> void:
 	_bgm.switch_to(BgmPlayer.TRACK_MAIN)
-	# 연출 오버레이가 보드를 가리고 있었으므로 끝난 직후에 피버 전구 (6-F3b에서는 정산 연출 시간 동안)
-	_set_bulb_mode(BulbPattern.Mode.FEVER, LineOverlay.blink_total_sec())
 	# 건너뛰면 재생 중인 연출 소리를 끊고 마무리음도 없다. 끝까지 봤을 때만 마무리음.
 	if skipped:
 		_sound.cut_oneshots()
 	else:
 		_sound.play(SoundBank.NAME_FEVER_END)
-	GameState.settle_spin()
+	_settle_game()
+	# 연출 오버레이가 보드를 가리고 있었으므로 끝난 직후에 피버 전구. 정산 카운트업이 있으면 그 시간 동안 (없으면 당첨선 깜빡임 시간)
+	var bulb_sec: float = _settle.total_sec() if _settle.is_active() else LineOverlay.blink_total_sec()
+	_set_bulb_mode(BulbPattern.Mode.FEVER, bulb_sec)
 
 
 ## 피버 연출이 재생 중인가 (테스트용)
@@ -823,6 +897,21 @@ func _make_button(node_name: String, text: String, rect: Rect2) -> Button:
 	UiFont.apply(button, UiFont.Face.BODY, BUTTON_FONT_MULTIPLE)
 	add_child(button)
 	return button
+
+
+## 정산 연출 (6-F3b): 동전이 버튼·안내 칸 위를 지나가므로 그 위, 피버 오버레이 아래에 둔다
+func _build_settle_show() -> void:
+	_settle = SettleShow.new()
+	add_child(_settle)
+	_settle.win_shown_changed.connect(_on_settle_win_shown)
+	_settle.credit_shown_changed.connect(_on_settle_credit_shown)
+	_settle.tick.connect(_on_settle_tick)
+	_settle.coin_landed.connect(_on_settle_tick)
+
+
+## 카운트업 증가와 동전 도착은 같은 틱 소리
+func _on_settle_tick() -> void:
+	_sound.play(SoundBank.NAME_TICK)
 
 
 ## 효과음 도우미. 다른 요소와 상관없는 Node라 그리기 순서·좌표에 영향이 없다.
