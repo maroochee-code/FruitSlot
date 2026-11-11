@@ -75,6 +75,7 @@ func _ready() -> void:
 	await _test_test_mode()
 	await _test_overlay_motion()
 	await _test_pool_coin_and_start_text()
+	await _test_release_keys()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -3876,3 +3877,56 @@ func _test_pool_coin_and_start_text() -> void:
 	_check(start.text == "START", "건너뛴 뒤 START")
 	main.free()
 	await get_tree().process_frame
+
+
+# ---------------------------------------------------------------- 릴리스 빌드(dev_build false)의 개발용 키
+
+func _test_release_keys() -> void:
+	var dev_before: bool = GameState.dev_build
+	# 개발 빌드: F1 디버그 창, F6 feel 재로딩이 동작
+	GameState.dev_build = true
+	var dev: Control = await _auto_main(96, 5000, 8)
+	var dev_panel: Control = dev.get_node("DebugPanel")
+	var feel_dev: FeelConfig = dev.pending_feel()
+	_press(dev, KEY_F1)
+	_check(dev_panel.visible, "개발 빌드: F1로 디버그 창이 켜짐")
+	_press(dev, KEY_F1)
+	_check(not dev_panel.visible, "개발 빌드: F1 다시 누르면 꺼짐")
+	_press(dev, KEY_F6)
+	_check(dev.pending_feel() != feel_dev, "개발 빌드: F6으로 feel 다시 읽음")
+	dev.free()
+	await get_tree().process_frame
+	# 릴리스 빌드: F1·F6 무반응
+	GameState.dev_build = false
+	var release: Control = await _auto_main(97, 5000, 8)
+	var panel: Control = release.get_node("DebugPanel")
+	var feel_before: FeelConfig = release.pending_feel()
+	var snapshot: Dictionary = _tm_snapshot(release)
+	_press(release, KEY_F1)
+	_press(release, KEY_F6)
+	_check(not panel.visible and release.pending_feel() == feel_before, "릴리스 빌드: F1(디버그 창)·F6(feel 재로딩) 무반응")
+	_press(release, KEY_F3)
+	_press(release, KEY_C)
+	_check(_tm_snapshot(release) == snapshot and release.test_menu() == null, "릴리스 빌드: F3·C도 무반응, 게임 상태 불변")
+	# GAME OVER 화면 중에도 같음
+	var go: GameOverOverlay = release.game_over_overlay()
+	go.open(GameState.get_balance(), GameState.get_pool(), GameState.get_fever_counts(), 1, 3, 1000, 3000, 0.0)
+	_press(release, KEY_F1)
+	_press(release, KEY_F6)
+	_check(go.is_open() and not panel.visible and release.pending_feel() == feel_before, "릴리스 빌드: GAME OVER 화면 중에도 F1·F6 무반응")
+	go.close()
+	release.free()
+	await get_tree().process_frame
+	# 릴리스 빌드에서도 시작 화면 F2는 운영자 설정을 연다 (개발 전용 표시는 없음)
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	_key(title, KEY_F2)
+	_check(title.settings_screen().is_open() and title.get_node_or_null("DevLabel") == null and title.get_node_or_null("TestModeLabel") == null, "릴리스 빌드: F2 설정 열림, DEV·TEST MODE 표시 없음")
+	_key(title, KEY_ESCAPE)
+	var mode_before: bool = GameState.test_mode
+	_key(title, KEY_F3)
+	_check(GameState.test_mode == mode_before and not title.toggle_test_mode(), "릴리스 빌드: 시작 화면 F3 무반응 (테스트 모드 값이 바뀌지 않음)")
+	title.free()
+	await get_tree().process_frame
+	GameState.dev_build = dev_before
+	GameState.test_mode = true

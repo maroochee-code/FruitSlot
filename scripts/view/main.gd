@@ -307,12 +307,15 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			press_stop(1)
 		KEY_3, KEY_KP_3:
 			press_stop(2)
+		# F1(디버그 창)·F6(feel 재로딩)은 개발용이라 릴리스 빌드에서는 무반응이다
 		KEY_F1:
-			toggle_debug()
+			if GameState.dev_build:
+				toggle_debug()
 		KEY_F3:
 			open_test_menu()
 		KEY_F6:
-			reload_feel()
+			if GameState.dev_build:
+				reload_feel()
 
 
 ## GAME OVER 화면이 떠 있을 때의 키 처리
@@ -325,9 +328,11 @@ func _handle_game_over_key(key: InputEventKey) -> void:
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
 			_game_over.confirm()
 		KEY_F1:
-			toggle_debug()
+			if GameState.dev_build:
+				toggle_debug()
 		KEY_F6:
-			reload_feel()
+			if GameState.dev_build:
+				reload_feel()
 
 
 ## COIN (버튼·C 키). 개발 빌드(coin_allowed)에서만 동작하고, GAME OVER 화면이 떠 있는 동안은 무효다.

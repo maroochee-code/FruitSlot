@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 0.21.3 — 2026-11-11 (내보내기 준비)
+
+### 추가
+- `export_presets.cfg`: Windows Desktop 프리셋(`builds/FruitSlot.exe`, pck 내장, `data/*.json` 포함, `scenes/test`·`tools`·`docs`·`assets/_preview`·`CHANGELOG.md`·`CLAUDE.md` 제외). `.gitignore`에 `/builds/` 추가. 절차·체크리스트는 `docs/내보내기.md`
+
+### 수정
+- **F1(디버그 창)·F6(feel 재로딩)은 개발 빌드(`dev_build`)에서만 동작**: 릴리스 exe에서는 무반응 (`main.gd` 일반·GAME OVER 키 처리 4곳). F2(운영자 설정)는 릴리스에서도 열림
+- 테스트: view_test +8 (970) — 개발 빌드 F1·F6 동작, 릴리스 F1·F6·F3·C 무반응(GAME OVER 중 포함), 릴리스 시작 화면 F2 열림·DEV 표시 없음·F3 무반응
+- 로직·balance·feel·economy·project.godot 변경 없음
+
 ## 0.21.2 — 2026-11-11 (POOL GET! 동전 회전, START 버튼 글자)
 
 ### 수정

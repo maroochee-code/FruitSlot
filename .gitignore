@@ -7,3 +7,6 @@
 
 # Python 캐시
 __pycache__/
+
+# 내보내기 결과물 (exe)
+/builds/
