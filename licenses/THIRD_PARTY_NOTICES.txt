@@ -1,0 +1,22 @@
+maroochee slot - Third-party notices
+====================================
+
+1. Godot Engine (MIT License)
+   This game was made with Godot Engine 4.7.2 (https://godotengine.org).
+   The license text is in GODOT_LICENSE.txt.
+   Copyright and license notices of the third-party libraries that are part
+   of Godot are in GODOT_COPYRIGHT.txt.
+
+2. Fonts - Galmuri (SIL Open Font License 1.1)
+   Used unmodified under its original name.
+   See docs/credits.md in the source repository for the source and license.
+
+3. Background music - generated with Suno (free plan)
+   "Arcade Daydream" and "Fever Rush" were generated with Suno on the free plan.
+   Under Suno's terms these songs are for personal, non-commercial use only,
+   and Suno must be credited. They may not be sold or monetized.
+   Music created with Suno: https://suno.com
+
+4. Sound effects and graphics
+   Sound effects were synthesized by the author's own scripts.
+   Pixel graphics were created for this project.

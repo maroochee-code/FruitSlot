@@ -64,11 +64,16 @@ Godot 4.7.2와 Claude Code로 만든 1인 개발 프로젝트이며, 프로젝�
 
 ## 크레딧
 
+- 엔진: [Godot Engine](https://godotengine.org/) (MIT License) — 라이선스 문구는 [licenses/GODOT_LICENSE.txt](licenses/GODOT_LICENSE.txt), 엔진에 포함된 서드파티 고지는 [licenses/GODOT_COPYRIGHT.txt](licenses/GODOT_COPYRIGHT.txt)
 - 폰트: 갈무리 (OFL 1.1) — 출처는 [docs/credits.md](docs/credits.md)
 - 효과음: 코드로 직접 합성
-- BGM: Suno로 생성 — 곡 정보와 사용 조건은 [docs/credits.md](docs/credits.md)
-- 엔진: [Godot Engine](https://godotengine.org/) (MIT License)
+- BGM 2곡: [Suno](https://suno.com)로 생성(무료 플랜). Suno 약관상 **개인·비상업적 용도로만** 쓸 수 있으며 Suno 표기가 필요합니다. 판매·수익 창출에 쓸 수 없습니다.
+- 전체 고지: [licenses/THIRD_PARTY_NOTICES.txt](licenses/THIRD_PARTY_NOTICES.txt)
 
 ## 라이선스
 
-아직 정하지 않았습니다. 별도 표기가 있기 전까지 모든 권리는 저작자에게 있습니다.
+- **소스 코드**(`scripts/`, `scenes/`, `tools/`, `data/`의 코드·설정 파일)는 [MIT License](LICENSE)로 공개합니다.
+- **그림**(`assets/`의 도트 그래픽), **효과음**, **BGM**, 로고 등 게임 리소스는 **모든 권리를 보유**합니다. 허락 없이 다른 곳에 재사용·재배포할 수 없습니다.
+- 위에 적은 서드파티(Godot, 폰트, Suno 곡)는 각자의 라이선스와 약관을 따릅니다.
+
+이 저장소의 BGM에 대한 Suno 약관 제한(비상업적 이용)은 코드의 MIT 라이선스와 별개로 항상 적용됩니다.
