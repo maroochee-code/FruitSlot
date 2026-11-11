@@ -32,6 +32,8 @@ var _fever_frames: int = 0
 
 
 func _ready() -> void:
+	# 테스트 모드(8-B): 게임을 켜면 꺼진 채 시작하므로, COIN을 쓰는 기존 검사를 위해 이 테스트는 켠 채로 시작한다
+	GameState.test_mode = true
 	# 설정 파일 격리: 개발자 PC의 실제 user://settings.json·highscore.json을 읽지도 쓰지도 않는다
 	UserSettings.configure(false)
 	# 오토로드 상태를 처음 상태로 되돌린 뒤 시작한다.
@@ -70,6 +72,8 @@ func _ready() -> void:
 	await _test_game_over_view()
 	await _test_title_screen()
 	await _test_settings_screen()
+	await _test_test_mode()
+	await _test_overlay_motion()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -3240,3 +3244,491 @@ func _test_settings_dev_and_best() -> void:
 	_check(GameState.is_game_over() and HighScore.active().best_peak_credit == GameState.run_peak_credit and GameState.run_peak_credit >= GameState.start_credit, "GAME OVER가 오면 그 판의 최고 크레딧이 최고 기록으로 남음")
 	_check(HighScore.load_from(SETTINGS_TEST_DIR + "highscore.json").best_peak_credit == GameState.run_peak_credit, "최고 기록 파일에도 저장됨")
 	_settings_end()
+
+
+# ---------------------------------------------------------------- 8-B 테스트 모드 화면
+
+## 테스트 메뉴 검사용 main (크레딧·베팅을 정해 두고, 개발 빌드 + 테스트 모드로 만든다)
+func _tm_main(rng_seed: int = 77, credit: int = 5000, total_bet: int = 8) -> Control:
+	GameState.dev_build = true
+	GameState.test_mode = true
+	return await _auto_main(rng_seed, credit, total_bet)
+
+
+func _tm_snapshot(main: Control) -> Dictionary:
+	return {
+		"credit": GameState.credit, "bet": GameState.bet, "win": GameState.last_win, "pool": GameState.get_pool(),
+		"counts": GameState.get_fever_counts(), "spinning": GameState.spinning, "tainted": GameState.run_tainted,
+		"forced": GameState.forced_symbol(), "over": GameState.is_game_over(), "peak": GameState.run_peak_credit, "spins": GameState.run_spins,
+		"credit_box": _box(main, "CreditBox").value_text(), "win_box": _box(main, "WinBox").value_text(),
+		"pool_box": _box(main, "PoolBox").value_text(), "fever_text": _fever(main).value_text(),
+	}
+
+
+func _test_test_mode() -> void:
+	var dev_before: bool = GameState.dev_build
+	await _test_tm_label_and_entry()
+	await _test_tm_open_conditions()
+	await _test_tm_menu_structure()
+	await _test_tm_previews()
+	await _test_tm_state_actions()
+	await _test_tm_forced_flow()
+	await _test_tm_title()
+	GameState.dev_build = dev_before
+	GameState.test_mode = true
+
+
+func _tm_overlaps(node: Node, rect: Rect2, skip: Node) -> bool:
+	if node != skip and node is Control and (node as Control).visible and (node as Control).size.x < 600.0 and (node as Control).get_global_rect().intersects(rect):
+		return true
+	for child: Node in node.get_children():
+		if child is Control and not (child as Control).visible:
+			continue
+		if _tm_overlaps(child, rect, skip):
+			return true
+	return false
+
+
+func _test_tm_label_and_entry() -> void:
+	var main: Control = await _tm_main()
+	var label: Label = main.test_label()
+	_check(main.test_menu() != null and label != null and label.text == "TEST" and label.visible, "개발 빌드 + 테스트 모드: 테스트 메뉴 노드와 'TEST' 라벨이 있고 보임")
+	_check(label.position == Vector2(9, 9) and label.size == Vector2(30, 16) and label.mouse_filter == Control.MOUSE_FILTER_IGNORE, "TEST 라벨 위치·크기: 왼쪽 위 (9, 9) 30×16, 클릭을 막지 않음")
+	_check(label.get_theme_color("font_color") == Color("ff9a1f"), "판이 오염되지 않았으면 TEST 라벨은 주황")
+	_check(not _tm_overlaps(main, label.get_global_rect(), label), "TEST 라벨은 기존 화면 요소(보드·라인 라벨·로고 칸 등)와 겹치지 않음")
+	var order: Array[Node] = main.get_children()
+	_check(order.find(label) < order.find(main.get_node("FeverOverlay")) and order.find(main.test_menu()) < order.find(main.game_over_overlay()), "그리기 순서: TEST 라벨은 피버 오버레이 아래, 메뉴는 GAME OVER 오버레이 아래")
+	GameState.run_tainted = true
+	main._refresh_test_label()
+	_check(label.get_theme_color("font_color") == Color("ff4a4a"), "판이 오염(run_tainted)되면 TEST 라벨 색만 빨강으로 바뀜")
+	GameState.run_tainted = false
+	main.free()
+	await get_tree().process_frame
+	# 테스트 모드 꺼짐: 라벨 숨김, F3 무반응
+	GameState.test_mode = false
+	var off: Control = await _auto_main(78, 5000, 8)
+	_check(off.test_menu() != null and not off.test_label().visible, "테스트 모드 꺼짐(개발 빌드): TEST 라벨 숨김")
+	_press(off, KEY_F3)
+	_check(not off.test_menu().is_open() and not off.open_test_menu(), "테스트 모드 꺼짐: F3으로 메뉴가 열리지 않음")
+	_check((off.get_node("CoinButton") as Button).disabled, "테스트 모드 꺼짐: COIN 버튼 회색 (안내 문구와 같은 coin_allowed 기준)")
+	_check(not _notice(off).contains("COIN(C)") and not off.get_node("DebugPanel").help_text().contains("C=COIN"), "테스트 모드 꺼짐: 안내 문구·디버그 도움말에도 COIN(C)이 없음 (coin_allowed 기준 일치)")
+	off.free()
+	await get_tree().process_frame
+	# 릴리즈 빌드: 노드 자체가 없음
+	GameState.test_mode = true
+	GameState.dev_build = false
+	var release: Control = await _auto_main(79, 5000, 8)
+	_check(release.test_menu() == null and release.test_label() == null and release.get_node_or_null("TestMenu") == null and release.get_node_or_null("TestLabel") == null, "릴리즈 빌드: 테스트 메뉴·TEST 라벨 노드를 만들지 않음")
+	_press(release, KEY_F3)
+	_check(not release.open_test_menu() and GameState.credit == 5000, "릴리즈 빌드: F3 무반응")
+	release.free()
+	await get_tree().process_frame
+	GameState.dev_build = true
+
+
+func _test_tm_open_conditions() -> void:
+	var main: Control = await _tm_main(80)
+	var menu: TestMenu = main.test_menu()
+	_press(main, KEY_F3)
+	_check(menu.is_open() and menu.tab() == 0, "F3: 테스트 메뉴 열림 (미리보기 탭)")
+	var before: Dictionary = _tm_snapshot(main)
+	for keycode: Key in [KEY_C, KEY_B, KEY_M, KEY_X, KEY_A, KEY_1, KEY_2, KEY_3, KEY_F1, KEY_F6]:
+		_press(main, keycode)
+	_check(_tm_snapshot(main) == before and menu.is_open(), "메뉴가 열려 있는 동안 게임 키(C B M X A 1~3 F1 F6)는 게임에 전달되지 않음")
+	_check(menu.get_node("Layer").mouse_filter == Control.MOUSE_FILTER_STOP and menu.get_node("Layer").size == Vector2(640, 414), "메뉴 바탕은 클릭을 막고 y 0~414만 덮음 (하단 CREDIT/WIN/BET 줄은 보임)")
+	_press(main, KEY_F3)
+	_check(not menu.is_open(), "F3: 다시 누르면 닫힘")
+	_press(main, KEY_F3)
+	_press(main, KEY_ESCAPE)
+	_check(not menu.is_open(), "Esc: 닫힘")
+	_check(GameState.credit == 5000 and not GameState.spinning, "열고 닫아도 게임 상태 불변")
+	# 열 수 없는 순간들
+	_check(main.open_test_menu(), "쉬는 중에는 열 수 있음")
+	menu.close()
+	main._game_over_pending = true
+	_check(not main.open_test_menu(), "GAME OVER 대기 중에는 열 수 없음")
+	main._game_over_pending = false
+	main.settle_show().start(100, 0, 1.0, 3, 0.45, 0.05, Vector2.ZERO, Vector2(10, 10))
+	_check(main.settle_show().is_active() and not main.open_test_menu(), "정산 연출 중에는 열 수 없음")
+	main.settle_show().finish_now()
+	var go: GameOverOverlay = main.game_over_overlay()
+	go.open(GameState.get_balance(), GameState.get_pool(), GameState.get_fever_counts(), 1, 3, 1000, 3000, 0.0)
+	_check(not main.open_test_menu(), "GAME OVER 화면이 떠 있는 동안에는 열 수 없음")
+	_press(main, KEY_F3)
+	_check(not menu.is_open() and go.is_open(), "GAME OVER 화면 중 F3는 무반응")
+	go.close()
+	_check(main.open_test_menu(), "GAME OVER 화면이 닫히면 다시 열 수 있음")
+	menu.close()
+	# 피버·풀 오버레이 중 (main의 실제 핸들러가 돌지 않게 끝내지 않은 채 main을 해제한다)
+	var steps: Array[Dictionary] = [{ "kind": FeverOverlay.KIND_FEVER, "symbol": "CHERRY", "name": "체리", "bonus": 100 }]
+	main._fever_steps = steps
+	main._fever_overlay.play(steps, 1.0, 0.1, 0.0, 1.0)
+	_check(main.fever_playing() and not main.open_test_menu(), "피버·풀 오버레이 중에는 열 수 없음")
+	_press(main, KEY_F3)
+	_check(not menu.is_open(), "피버·풀 오버레이 중 F3는 무반응")
+	main.free()
+	await get_tree().process_frame
+	var spinning: Control = await _tm_main(81)
+	spinning.do_spin()
+	_check(GameState.spinning and not spinning.open_test_menu(), "릴 회전 중에는 열 수 없음")
+	_press(spinning, KEY_F3)
+	_check(not spinning.test_menu().is_open(), "릴 회전 중 F3는 무반응")
+	_advance_for(spinning, 20.0)
+	spinning.free()
+	await get_tree().process_frame
+	var auto: Control = await _tm_main(82, 5000, 8)
+	GameState.start_auto()
+	_check(GameState.auto_on and not auto.open_test_menu(), "AUTO 중에는 열 수 없음")
+	GameState.stop_auto(AutoSpin.REASON_USER)
+	_advance_for(auto, 20.0)
+	auto.free()
+	await get_tree().process_frame
+
+
+func _test_tm_menu_structure() -> void:
+	var main: Control = await _tm_main(83)
+	var menu: TestMenu = main.test_menu()
+	var feel: FeelConfig = main.feel()
+	menu.open(feel)
+	_check(menu.item_ids() == PackedStringArray(["fever:CHERRY", "fever:GRAPE", "fever:BELL", "fever:SEVEN", "settle:small", "settle:mid", "settle:big", "gameover", "bulb:spin", "bulb:win", "bulb:fever"]), "미리보기 탭: 피버 4종 + 정산 소/중/대 + GAME OVER + 전구 3종")
+	_check(String(menu.items()[3]["label"]).contains("POOL GET!") and String(menu.items()[0]["label"]).contains("체리"), "세븐 항목에는 POOL GET!, 심볼 이름은 balance.json 이름")
+	menu.select_tab(1)
+	_check(menu.item_ids() == PackedStringArray(["credit:1", "credit:10", "credit:100", "counter:CHERRY", "counter:GRAPE", "counter:BELL", "pool:initial", "pool:yellow", "pool:red"]), "상태 설정 탭: 크레딧 ×1·×10·×100, 피버 카운터(초기 2 이상 심볼), 풀 3종")
+	var coin: int = GameState.coin_amount
+	_check(String(menu.items()[0]["label"]).contains(GameOverOverlay.format_amount(coin)) and String(menu.items()[2]["label"]).contains(GameOverOverlay.format_amount(coin * 100)), "크레딧 금액은 economy.json의 coin_amount 배수")
+	_check(String(menu.items()[6]["label"]).contains(GameOverOverlay.format_amount(GameState.get_balance().pool_initial)) and String(menu.items()[7]["label"]).contains(GameOverOverlay.format_amount(int(feel.pool_yellow_from))) and String(menu.items()[8]["label"]).contains(GameOverOverlay.format_amount(int(feel.pool_red_from))), "풀 프리셋은 balance.json 초기값·feel.json 노랑/빨강 기준 (새 키 없음)")
+	menu.select_tab(2)
+	_check(menu.item_ids() == PackedStringArray(["force:CHERRY", "force:GRAPE", "force:BELL", "force:SEVEN", "force:none"]), "다음 판 당첨 탭: 심볼 4개 + 예약 취소")
+	# 줄 배치: 패널 안, 안내 글자 위
+	var fits: bool = true
+	for tab_index: int in 3:
+		menu.select_tab(tab_index)
+		for i: int in menu.items().size():
+			var button: Button = menu.row_button(i)
+			fits = fits and button.position == Vector2(69, 82 + 27 * i) and button.size == Vector2(502, 26) and button.position.y + button.size.y <= 380.0
+	_check(fits, "모든 줄: 위치 (69, 82 + 27×줄), 크기 502×26, 안내 글자(y 380) 위")
+	_check(menu.tab_button(0).position == Vector2(87, 42) and menu.tab_button(1).text == "상태 설정" and menu.tab_button(2).text == "다음 판 당첨", "탭 버튼 위치·글자")
+	# 키 조작
+	menu.select_tab(0)
+	_press(main, KEY_DOWN)
+	_check(menu.selected() == 1, "↓: 다음 줄")
+	_press(main, KEY_UP)
+	_press(main, KEY_UP)
+	_check(menu.selected() == menu.items().size() - 1, "↑: 첫 줄에서 마지막 줄로")
+	_press(main, KEY_TAB)
+	_check(menu.tab() == 1 and menu.selected() == 0, "Tab: 다음 탭, 첫 줄 선택")
+	_press(main, KEY_PAGEUP)
+	_press(main, KEY_PAGEUP)
+	_check(menu.tab() == 2, "PageUp: 이전 탭 (처음에서 마지막으로)")
+	menu.tab_button(0).pressed.emit()
+	_check(menu.tab() == 0, "탭 버튼 클릭")
+	menu.close()
+	_check(menu.execute("nope") == false and menu.execute("fever:LEMON") == false and menu.execute("pool:weird") == false, "모르는 항목은 거절")
+	main.free()
+	await get_tree().process_frame
+
+
+func _test_tm_previews() -> void:
+	var main: Control = await _tm_main(84)
+	var menu: TestMenu = main.test_menu()
+	var feel: FeelConfig = main.feel()
+	var bank: SoundBank = main.sound_bank()
+	var before: Dictionary = _tm_snapshot(main)
+	# 피버 미리보기
+	menu.open(feel)
+	bank.clear_requests()
+	_check(menu.execute("fever:CHERRY") and not menu.is_open() and menu.fever_overlay().is_playing() and menu.fever_overlay().step_count() == 1, "FEVER! 체리: 메뉴가 닫히고 단계 1개 재생")
+	_check(menu.is_previewing() and not main.fever_playing(), "미리보기 중: 메뉴 인스턴스만 재생되고 main의 오버레이는 쉬는 중")
+	_check(_sound_count(bank, SoundBank.NAME_FEVER_START) == 1, "피버 미리보기: 피버 시작 소리")
+	var cherry_bonus: int = int(menu.fever_overlay().step_at(0)["bonus"])
+	_check(cherry_bonus == int(GameState.get_balance().fever_multipliers["CHERRY"]) * maxi(GameState.bet, GameState.get_balance().fever_min_total_bet), "보너스 표시 = 배수 × 기준 베팅 (가짜 값, 실제 지급과 무관)")
+	var guard: Dictionary = _tm_snapshot(main)
+	for keycode: Key in [KEY_C, KEY_B, KEY_SPACE, KEY_A]:
+		_press(main, keycode)
+	_check(_tm_snapshot(main) == guard, "미리보기 중에는 게임 키가 게임에 전달되지 않음 (Space는 건너뛰기 시도)")
+	menu.advance(60.0)
+	_check(not menu.is_previewing() and not menu.fever_overlay().is_playing(), "연출이 끝나면 미리보기 종료")
+	_check(_tm_snapshot(main) == before, "피버 미리보기 전후: 크레딧·풀·카운터·표시 칸·테스트 판 표시가 모두 불변")
+	menu.open(feel)
+	menu.execute("fever:SEVEN")
+	_check(menu.fever_overlay().step_count() == 2 and menu.fever_overlay().step_at(1)["kind"] == FeverOverlay.KIND_POOL and int(menu.fever_overlay().step_at(1)["bonus"]) == GameState.get_pool(), "세븐 미리보기: 피버 + POOL GET! 2단계, 풀 금액은 지금 풀")
+	_check(_sound_count(bank, SoundBank.NAME_FEVER_START) >= 1, "세븐 미리보기 시작음")
+	menu.advance(0.1)
+	_press(main, KEY_ESCAPE)
+	menu.advance(60.0)
+	_check(_tm_snapshot(main) == before, "세븐+풀 미리보기 뒤에도 게임 상태 불변")
+	# 정산 미리보기 (소/중/대)
+	var ref_bet: int = maxi(GameState.bet, GameState.get_balance().fever_min_total_bet)
+	var expected: Dictionary = { "small": ref_bet, "mid": roundi(ref_bet * feel.win_mid_ratio), "big": roundi(ref_bet * feel.win_big_ratio) }
+	for tier_name: String in ["small", "mid", "big"]:
+		menu.open(feel)
+		bank.clear_requests()
+		_check(menu.execute("settle:" + tier_name) and menu.settle_show().is_active() and menu.settle_label().visible, "정산 미리보기 %s: 재생 시작, 숫자 라벨 보임" % tier_name)
+		_check(menu.settle_label().text.begins_with("WIN 0") and menu.settle_label().text.contains("CREDIT %s" % GameOverOverlay.format_amount(GameState.credit)), "정산 미리보기 %s: 처음 WIN 0, CREDIT은 지금 크레딧" % tier_name)
+		_check(_box(main, "WinBox").value_text() == before["win_box"] and _box(main, "CreditBox").value_text() == before["credit_box"], "정산 미리보기 %s 중: main의 WIN·CREDIT 박스는 그대로" % tier_name)
+		menu.advance(feel.countup_sec(_tier_of(tier_name)) + feel.coin_fly_sec + 1.0)
+		_check(not menu.settle_show().is_active() and not menu.settle_label().visible, "정산 미리보기 %s: 끝나면 라벨이 사라짐" % tier_name)
+		_check(menu.settle_label().text.begins_with("WIN %s" % GameOverOverlay.format_amount(int(expected[tier_name]))) and menu.settle_label().text.ends_with(GameOverOverlay.format_amount(GameState.credit + int(expected[tier_name]))), "정산 미리보기 %s: 최종 WIN = %d (기준 베팅 × 비율), CREDIT은 가짜로 더한 값" % [tier_name, int(expected[tier_name])])
+		_check(GameState.credit == before["credit"] and GameState.last_win == before["win"], "정산 미리보기 %s 뒤: 실제 크레딧·WIN 불변" % tier_name)
+	_check(_sound_count(bank, SoundBank.NAME_TICK) > 0, "정산 미리보기: 카운트업 틱 소리")
+	menu.open(feel)
+	menu.execute("settle:big")
+	menu.advance(0.2)
+	_press(main, KEY_ESCAPE)
+	_check(not menu.settle_show().is_active(), "정산 미리보기 중 Esc/Space: 끝값으로 건너뜀")
+	# GAME OVER 미리보기
+	menu.open(feel)
+	bank.clear_requests()
+	_check(menu.execute("gameover") and menu.game_over_preview().is_open() and menu.is_previewing(), "GAME OVER 미리보기: 별도 화면이 열림")
+	_check(not GameState.is_game_over() and not main.game_over_overlay().is_open(), "GAME OVER 미리보기: 로직 GAME OVER·main의 실제 오버레이는 그대로")
+	_check(_sound_count(bank, SoundBank.NAME_GAMEOVER) == 1 and menu.game_over_preview().pool_text().contains(GameOverOverlay.format_amount(GameState.get_pool())), "GAME OVER 미리보기: gameover 소리, 지금 풀 금액 표시")
+	_press(main, KEY_SPACE)
+	_check(not menu.game_over_preview().is_open() and not menu.is_previewing(), "GAME OVER 미리보기: Space로 닫힘")
+	menu.open(feel)
+	menu.execute("gameover")
+	menu.game_over_preview().continue_button().pressed.emit()
+	_check(not menu.game_over_preview().is_open() and GameState.credit == before["credit"] and GameState.continues_left == GameState.continue_max, "GAME OVER 미리보기의 CONTINUE 클릭은 화면만 닫고 이어하기 횟수·크레딧을 쓰지 않음")
+	# 전구 미리보기
+	for mode_name: String in ["spin", "win", "fever"]:
+		menu.open(feel)
+		_check(menu.execute("bulb:" + mode_name) and not menu.is_open(), "전구 미리보기 %s 실행, 메뉴 닫힘" % mode_name)
+		_check(main.bulb_mode() == int(TestMenu.BULB_MODES[mode_name]), "전구 미리보기 %s: 전구 모양이 바뀜" % mode_name)
+		_advance_for(main, TestMenu.BULB_PREVIEW_SEC + 0.5)
+		_check(main.bulb_mode() == BulbPattern.Mode.IDLE, "전구 미리보기 %s: 몇 초 뒤 대기 모양으로 복귀" % mode_name)
+	_check(_notice(main).contains("전구 모양"), "전구 미리보기: 안내 칸에 설명")
+	_check(_tm_snapshot(main) == before, "미리보기 전체(피버·정산·GAME OVER·전구) 뒤에도 게임 상태·표시 칸 불변, 테스트 판 표시 없음")
+	main.free()
+	await get_tree().process_frame
+
+
+func _tier_of(tier_name: String) -> int:
+	return TestMenu.SETTLE_TIERS[tier_name]
+
+
+func _test_tm_state_actions() -> void:
+	var main: Control = await _tm_main(85, 1000, 8)
+	var menu: TestMenu = main.test_menu()
+	var feel: FeelConfig = main.feel()
+	var coin: int = GameState.coin_amount
+	var grants: Array[String] = []
+	GameState.credit_granted.connect(func(amount: int, reason: StringName) -> void: grants.append("%d %s" % [amount, reason]))
+	# 크레딧 지급: grant_credit(test_coin)
+	menu.open(feel)
+	_check(menu.execute("credit:10") and not menu.is_open(), "크레딧 ×10 실행, 메뉴 닫힘")
+	_check(GameState.credit == 1000 + coin * 10 and grants == ["%d test_coin" % (coin * 10)], "크레딧 지급은 grant_credit(test_coin)을 거침")
+	_check(_box(main, "CreditBox").value_text() == str(1000 + coin * 10) and GameState.run_tainted, "CREDIT 표시 갱신 + 테스트 판 표시")
+	_check(main.test_label().get_theme_color("font_color") == Color("ff4a4a"), "테스트 판이 되면 TEST 라벨이 빨강")
+	_check(_notice(main).contains("크레딧 +%s" % GameOverOverlay.format_amount(coin * 10)), "안내 칸에 지급 내용")
+	# 피버 카운터
+	menu.open(feel)
+	_check(menu.execute("counter:CHERRY") and GameState.get_fever_counts()["CHERRY"] == 1, "체리 카운터 = 1")
+	_check(_fever(main).value_text().contains("체리 ×1") and _notice(main).contains("피버 카운터"), "오른쪽 피버 패널이 바로 갱신 + 안내")
+	var cherry_ready: bool = _fever(main).is_last_one("CHERRY")
+	_check(cherry_ready, "카운터 1이면 패널이 '마지막 1회' 상태로 보임 (기존 표시 규칙)")
+	# 풀 금액
+	menu.open(feel)
+	_check(menu.execute("pool:red") and GameState.get_pool() == int(feel.pool_red_from), "풀 금액 = 빨강 기준")
+	_check(_box(main, "PoolBox").value_text() == str(int(feel.pool_red_from)) and main.pool_tier(GameState.get_pool()) == main.POOL_TIER_RED, "POOL 표시가 바로 갱신, 색 단계는 빨강 (기존 표시 규칙)")
+	menu.open(feel)
+	menu.execute("pool:yellow")
+	_check(main.pool_tier(GameState.get_pool()) == main.POOL_TIER_YELLOW and _box(main, "PoolBox").value_text() == str(int(feel.pool_yellow_from)), "풀 금액 = 노랑 기준 → 노랑 단계")
+	menu.open(feel)
+	menu.execute("pool:initial")
+	_check(GameState.get_pool() == GameState.get_balance().pool_initial, "풀 금액 = 초기값")
+	# 예약
+	menu.open(feel)
+	_check(menu.execute("force:BELL") and GameState.forced_symbol() == "BELL", "다음 판 벨 당첨 예약")
+	menu.open(feel)
+	menu.select_tab(2)
+	_check(String(menu.items()[2]["label"]).contains("(예약됨)") and not String(menu.items()[0]["label"]).contains("(예약됨)"), "예약한 줄에 '(예약됨)' 표시")
+	menu.close()
+	menu.open(feel)
+	menu.execute("force:none")
+	_check(GameState.forced_symbol() == "" and _notice(main).contains("취소"), "예약 취소")
+	# 쓸 수 없을 때
+	menu.open(feel)
+	GameState.test_mode = false
+	var credit: int = GameState.credit
+	_check(not menu.execute("credit:1") and GameState.credit == credit and _notice(main).contains("쓸 수 없습니다"), "테스트 모드가 꺼진 뒤의 실행은 거절 + 안내 (게임 상태 불변)")
+	GameState.test_mode = true
+	main.free()
+	await get_tree().process_frame
+
+
+## 강제 예약 → 실제 START → 피버·풀 연출 → 정산까지, 화면이 로직과 같은지
+func _test_tm_forced_flow() -> void:
+	var main: Control = await _tm_main(86, 5000, 8)
+	var menu: TestMenu = main.test_menu()
+	var feel: FeelConfig = main.feel()
+	GameState.test_set_pool(1800)
+	menu.open(feel)
+	menu.execute("force:SEVEN")
+	var credit_before: int = GameState.credit
+	var result: SpinResult = main.do_spin()
+	_check(result != null and GameState.forced_symbol() == "" and result.fever_triggers.has("SEVEN") and result.pool_won >= 1800, "예약한 START: 세븐 피버 + 설정한 풀(1800 이상) 획득")
+	_check(main.test_label().get_theme_color("font_color") == Color("ff4a4a") and GameState.run_tainted, "강제한 판은 테스트 판 표시 (TEST 라벨 빨강)")
+	_advance_for(main, 60.0)
+	_check(not GameState.spinning and not main.fever_playing(), "릴·연출이 모두 끝남")
+	_check(GameState.credit == credit_before - 8 + result.total_payout() and _box(main, "CreditBox").value_text() == str(GameState.credit), "정산: 크레딧 = 이전 − 베팅 + 총 지급 (라인 + 피버 + 풀), CREDIT 표시도 같음")
+	_check(_box(main, "WinBox").value_text() == str(result.total_payout()), "WIN 표시 = 총 지급")
+	_check(_box(main, "PoolBox").value_text() == str(GameState.get_pool()) and GameState.get_pool() == GameState.get_balance().pool_initial, "POOL 표시 = 로직 풀, 풀은 초기값으로 돌아감")
+	_check(_fever(main).value_text().contains("세븐 ×%d" % GameState.get_fever_counts()["SEVEN"]), "피버 패널 = 로직 카운터")
+	# 같은 시드를 강제 없이 돌린 결과와 비교: 강제 판 이후 다음 판의 정지 위치는 같다
+	GameState.credit = 5000
+	var next_forced: SpinResult = main.do_spin()
+	_advance_for(main, 60.0)
+	var twin: SlotLogic = SlotLogic.new(GameState.get_balance(), 86)
+	twin.spin(8)
+	_check(next_forced != null and next_forced.stops == twin.spin(8).stops, "강제 판 다음 판의 정지 위치는 강제하지 않은 같은 시드와 같음 (RNG 순서 불변)")
+	main.free()
+	await get_tree().process_frame
+
+
+func _test_tm_title() -> void:
+	GameState.dev_build = true
+	GameState.test_mode = false
+	var title: TitleScreen = _make_title()
+	await get_tree().process_frame
+	var label: Label = title.test_mode_label()
+	_check(label != null and label.text == "TEST MODE" and not label.visible, "시작 화면: 테스트 모드가 꺼져 있으면 TEST MODE 표시 없음")
+	_check(label.position == Vector2(477, 436) and label.size == Vector2(100, 16) and title.get_node("BottomPanel").get_rect().encloses(label.get_rect()), "TEST MODE 라벨 위치·크기: DEV 라벨 아래, 하단 패널 안")
+	var hint: Label = title.get_node("HintLabel")
+	var hint_width: float = hint.get_minimum_size().x
+	var hint_text_rect: Rect2 = Rect2(hint.position.x + (hint.size.x - hint_width) / 2.0, hint.position.y, hint_width, hint.size.y)
+	_check(not label.get_rect().intersects(title.get_node("DevLabel").get_rect()) and not label.get_rect().intersects(hint_text_rect), "TEST MODE 라벨은 DEV 라벨·안내 글자(실제 글자 폭)와 겹치지 않음")
+	_key(title, KEY_F3)
+	_check(GameState.test_mode and label.visible and GameState.coin_allowed(), "F3: 테스트 모드 켜짐 (COIN 가능), 표시 보임")
+	_key(title, KEY_F3)
+	_check(not GameState.test_mode and not label.visible and not GameState.coin_allowed(), "F3: 다시 누르면 꺼짐")
+	_key(title, KEY_F3)
+	var settings: SettingsScreen = title.settings_screen()
+	title.open_settings()
+	_key(title, KEY_F3)
+	_check(GameState.test_mode, "설정 화면이 열려 있는 동안 F3은 설정 화면이 받음 (테스트 모드 불변)")
+	settings.cancel()
+	_check(not title.is_starting() and GameState.credit == 0, "테스트 모드를 켜도 START는 아님")
+	title.press_start()
+	_key(title, KEY_F3)
+	_check(GameState.test_mode and title.is_starting(), "START가 받아들여진 뒤에는 F3 무시, 테스트 모드는 켜진 채 유지")
+	_check(GameState.credit == GameState.start_credit and not GameState.run_tainted, "테스트 모드로 START해도 시작 크레딧만 지급, 테스트 판 표시는 쓸 때만")
+	title.free()
+	await get_tree().process_frame
+	# 릴리즈 빌드: 표시도 토글도 없음
+	GameState.dev_build = false
+	GameState.test_mode = false
+	var release: TitleScreen = _make_title()
+	await get_tree().process_frame
+	_key(release, KEY_F3)
+	_check(release.test_mode_label() == null and release.get_node_or_null("TestModeLabel") == null and not GameState.test_mode and not release.toggle_test_mode(), "릴리즈 빌드: F3 무반응, TEST MODE 노드 없음")
+	release.free()
+	await get_tree().process_frame
+	GameState.dev_build = true
+	GameState.test_mode = true
+
+
+# ---------------------------------------------------------------- 피버·풀 연출 배경 움직임 (6-F 연결)
+
+func _bg_name(overlay: FeverOverlay) -> String:
+	return (overlay.get_node("BgFrame") as TextureRect).texture.resource_path.get_file()
+
+
+func _banner_name(overlay: FeverOverlay, kind: StringName) -> String:
+	return ((overlay.get_node("BannerFever" if kind == FeverOverlay.KIND_FEVER else "BannerPool")) as TextureRect).texture.resource_path.get_file()
+
+
+func _test_overlay_motion() -> void:
+	var defaults: FeelConfig = FeelConfig.from_dict({})
+	_check(defaults.fever_bg_frame_sec == 0.25 and defaults.fever_banner_flash_sec == 0.15, "feel 새 키 기본값 (0.25 / 0.15)")
+	var bad: FeelConfig = FeelConfig.from_dict({ "fever_bg_frame_sec": 0.01, "fever_banner_flash_sec": 3.0 })
+	_check(bad.fever_bg_frame_sec == 0.25 and bad.fever_banner_flash_sec == 0.15, "범위 밖 값(0.05 미만 / 2 초과)은 기본값으로 대체")
+	var edge: FeelConfig = FeelConfig.from_dict({ "fever_bg_frame_sec": 0.05, "fever_banner_flash_sec": 2.0 })
+	_check(edge.fever_bg_frame_sec == 0.05 and edge.fever_banner_flash_sec == 2.0, "경계값 0.05 / 2.0은 그대로")
+	var real: FeelConfig = FeelConfig.load_from_file()
+	_check(real.errors.is_empty() and real.fever_bg_frame_sec == 0.25 and real.fever_banner_flash_sec == 0.15, "data/feel.json의 두 키 = 0.25 / 0.15, 문제 없음")
+	var steps: Array[Dictionary] = [
+		{ "kind": FeverOverlay.KIND_FEVER, "symbol": "CHERRY", "name": "체리", "bonus": 100 },
+		{ "kind": FeverOverlay.KIND_POOL, "symbol": "", "name": FeverOverlay.POOL_NAME_TEXT, "bonus": 500 },
+	]
+	# 움직임을 켜지 않으면(기본) 정지: 기존 동작 그대로
+	var still: FeverOverlay = FeverOverlay.new()
+	add_child(still)
+	await get_tree().process_frame
+	still.play(steps, 1.0, 0.3, 0.0, 1.0)
+	still.advance(0.6)
+	_check(_bg_name(still) == "fever_bg_0.png" and _banner_name(still, FeverOverlay.KIND_FEVER) == "fever_banner_a.png", "set_motion을 부르지 않으면 배경·배너가 정지 (0번 프레임, 배너 a)")
+	still.free()
+	# 움직임: 재생 시간에 맞춰 프레임·배너 색이 바뀜
+	var overlay: FeverOverlay = FeverOverlay.new()
+	add_child(overlay)
+	await get_tree().process_frame
+	overlay.set_motion(0.25, 0.15)
+	overlay.play(steps, 1.0, 0.3, 0.0, 1.0)
+	_check(_bg_name(overlay) == "fever_bg_0.png" and _banner_name(overlay, FeverOverlay.KIND_FEVER) == "fever_banner_a.png", "재생 시작: 0번 프레임·배너 a")
+	overlay.advance(0.2)
+	_check(_bg_name(overlay) == "fever_bg_0.png" and _banner_name(overlay, FeverOverlay.KIND_FEVER) == "fever_banner_b.png", "0.2초: 배경은 아직 0번, 배너 색은 b로 (0.15초 간격)")
+	overlay.advance(0.1)
+	_check(_bg_name(overlay) == "fever_bg_1.png", "0.3초: 배경 1번 프레임 (0.25초 간격)")
+	overlay.advance(0.25)
+	_check(_bg_name(overlay) == "fever_bg_2.png", "0.55초: 배경 2번 프레임")
+	overlay.advance(0.25)
+	_check(_bg_name(overlay) == "fever_bg_0.png", "0.8초: 3프레임을 돌아 다시 0번")
+	overlay.advance(0.3)
+	_check(not overlay.is_showing_step() and overlay.is_playing(), "단계 사이 간격(1.1초)에도 재생 중")
+	overlay.advance(0.3)
+	_check(overlay.current_step() == 1 and _bg_name(overlay).begins_with("pool_bg_") and _banner_name(overlay, FeverOverlay.KIND_POOL).begins_with("pool_banner_"), "풀 단계: 풀 배경·풀 배너도 같은 방식으로 움직임")
+	var seen: Dictionary = {}
+	for i: int in 12:
+		overlay.advance(0.1)
+		if overlay.is_playing():
+			seen[_bg_name(overlay)] = true
+	_check(seen.size() >= 2 and not seen.has("fever_bg_0.png"), "풀 단계 재생 중 pool_bg 프레임이 둘 이상 나옴 (피버 배경이 섞이지 않음)")
+	# 끝나면 멈춤
+	overlay.advance(10.0)
+	_check(not overlay.is_playing() and not overlay.visible, "재생이 끝남")
+	var last_bg: String = _bg_name(overlay)
+	var last_banner: String = _banner_name(overlay, FeverOverlay.KIND_POOL)
+	overlay.advance(1.0)
+	overlay.advance(0.7)
+	_check(_bg_name(overlay) == last_bg and _banner_name(overlay, FeverOverlay.KIND_POOL) == last_banner, "끝난 뒤에는 advance를 불러도 프레임·배너 색이 더 바뀌지 않음")
+	# 다시 재생하면 처음 프레임부터
+	overlay.play(steps, 1.0, 0.3, 0.0, 1.0)
+	_check(_bg_name(overlay) == "fever_bg_0.png" and _banner_name(overlay, FeverOverlay.KIND_FEVER) == "fever_banner_a.png", "다시 재생하면 0번 프레임·배너 a부터")
+	# 건너뛰기: 정상 종료, 단계 알림 그대로, 이후 멈춤
+	var counts: Array[int] = [0, 0]
+	overlay.step_started.connect(func(_i: int) -> void: counts[0] += 1)
+	overlay.finished.connect(func(_skipped: bool) -> void: counts[1] += 1)
+	overlay.advance(0.4)
+	_check(overlay.skip() and not overlay.is_playing() and counts[1] == 1 and counts[0] == 1, "건너뛰기: 정상 종료(finished 한 번), 아직 안 알린 풀 단계 시작이 알려짐")
+	var skipped_bg: String = _bg_name(overlay)
+	overlay.advance(1.0)
+	_check(_bg_name(overlay) == skipped_bg, "건너뛴 뒤에도 프레임이 더 바뀌지 않음")
+	# 움직임 끄기(0): 정지
+	overlay.set_motion(0.0, 0.0)
+	overlay.play(steps, 1.0, 0.3, 0.0, 1.0)
+	var still_bg: String = _bg_name(overlay)
+	overlay.advance(0.6)
+	_check(_bg_name(overlay) == still_bg and overlay.is_playing(), "간격 0이면 재생 중에도 프레임이 바뀌지 않음 (정지)")
+	_check(overlay.step_count() == 2 and overlay.elapsed() >= 0.6, "움직임 설정은 단계·시간 진행에 영향이 없음")
+	overlay.free()
+	await get_tree().process_frame
+	# 테스트 메뉴 미리보기와 main 실제 흐름에서도 움직임
+	var main: Control = await _tm_main(91)
+	var menu: TestMenu = main.test_menu()
+	menu.open(main.feel())
+	menu.execute("fever:SEVEN")
+	menu.advance(0.3)
+	_check(_bg_name(menu.fever_overlay()) == "fever_bg_1.png", "테스트 메뉴 미리보기: 배경이 움직임 (feel.json 간격)")
+	menu.advance(60.0)
+	var game_bg: TextureRect = main.get_node("FeverOverlay/BgFrame")
+	GameState.test_force_next_win("SEVEN")
+	main.do_spin()
+	var names: Dictionary = {}
+	var guard: float = 0.0
+	while guard < 90.0:
+		main.advance(0.05)
+		guard += 0.05
+		if main.fever_playing():
+			names[game_bg.texture.resource_path.get_file()] = true
+	_check(names.size() >= 3 and not GameState.spinning, "main 실제 피버 흐름: 재생 중 배경 프레임이 여러 장 나옴 (%s)" % [names.keys()])
+	main.free()
+	await get_tree().process_frame

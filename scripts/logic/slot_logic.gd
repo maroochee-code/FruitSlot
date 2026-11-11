@@ -68,13 +68,65 @@ func distribute_bet(total_bet: int) -> PackedInt32Array:
 
 
 ## 스핀 1회. 정지 위치를 RNG로 정하고 모든 결과를 확정한다.
-func spin(total_bet: int) -> SpinResult:
+## forced_stops는 테스트 모드 전용 입구다 (비어 있으면 기존과 완전히 같다). 주어져도 roll_stops()는 평소처럼 먼저 불러
+## RNG를 소비하고 그 결과만 지정값으로 바꿔치기하므로, 강제 판 뒤의 시드 순서는 변하지 않는다.
+## 정지 위치 개수·범위가 맞지 않는 지정값은 무시한다.
+func spin(total_bet: int, forced_stops: PackedInt32Array = PackedInt32Array()) -> SpinResult:
 	if not is_valid_bet(total_bet):
 		push_error("SlotLogic.spin: 잘못된 베팅 %d (1~%d)" % [total_bet, _data.max_total_bet])
 		return null
-	var result: SpinResult = resolve_stops(roll_stops(), total_bet)
+	var stops: PackedInt32Array = roll_stops()
+	if _is_valid_stops(forced_stops):
+		stops = forced_stops
+	var result: SpinResult = resolve_stops(stops, total_bet)
 	spin_resolved.emit(result)
 	return result
+
+
+## 테스트 모드 전용: 피버 카운터를 count(1~초기 카운트)로 정한다. 평균 베팅 합은
+## (초기 카운트 − count) × reference_bet으로 채워, 카운터를 그만큼 줄인 판들이 있었던 것처럼 보너스가 계산되게 한다.
+## 알 수 없는 심볼·범위 밖이면 false. 이후 피버 발동은 기존 규칙(_apply_fever)을 그대로 탄다.
+func set_fever_count(symbol: String, count: int, reference_bet: int) -> bool:
+	if not _fever_counts.has(symbol):
+		return false
+	var initial: int = _data.fever_initial_counts[symbol]
+	if count < 1 or count > initial or reference_bet < 1:
+		return false
+	_fever_counts[symbol] = count
+	_fever_bet_sums[symbol] = (initial - count) * reference_bet
+	return true
+
+
+## 테스트 모드 전용: 풀 금액을 amount(0 이상)로 정한다. 이후 적립·획득은 기존 규칙을 그대로 탄다.
+func set_pool(amount: int) -> bool:
+	if amount < 0:
+		return false
+	_pool_units = amount * POOL_SCALE
+	return true
+
+
+## 테스트 모드 전용: 이 라인 베팅에서 symbol의 라인 당첨이 한 줄 이상 나오는 정지 위치를 찾는다 (가장 앞선 조합).
+## 상태를 바꾸지 않고 RNG도 쓰지 않는다. 없으면 빈 목록.
+func find_stops_with_win(symbol: String, line_bets: PackedInt32Array) -> PackedInt32Array:
+	var reel_count: int = _data.reels.size()
+	if reel_count != 3:
+		return PackedInt32Array()
+	for a: int in _data.reels[0].size():
+		for b: int in _data.reels[1].size():
+			for c: int in _data.reels[2].size():
+				var stops: PackedInt32Array = PackedInt32Array([a, b, c])
+				if _has_win_with(evaluate_lines(build_grid(stops), line_bets), symbol):
+					return stops
+	return PackedInt32Array()
+
+
+func _is_valid_stops(stops: PackedInt32Array) -> bool:
+	if stops.size() != _data.reels.size():
+		return false
+	for i: int in stops.size():
+		if stops[i] < 0 or stops[i] >= _data.reels[i].size():
+			return false
+	return true
 
 
 ## 릴별 정지 위치를 추첨한다.

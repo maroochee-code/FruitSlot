@@ -30,6 +30,10 @@ func _ready() -> void:
 	_test_fever_bonus_basis_setting()
 	_test_theory_hand_checked()
 	_test_theory_matches_logic()
+	_test_forced_stops_keep_rng_sequence()
+	_test_set_fever_count()
+	_test_set_pool()
+	_test_find_stops_with_win()
 	print("==================== LOGIC TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	# 화면 없이(--headless) 실행할 때만 종료한다. 에디터·MCP 실행은 창을 열어 둔다.
 	if DisplayServer.get_name() == "headless":
@@ -333,3 +337,95 @@ func _check(condition: bool, label: String) -> void:
 	else:
 		_failed += 1
 		push_error("  [FAIL] " + label)
+
+
+# ---------------------------------------------------------------- 8-B 테스트 모드용 입구
+
+## spin(bet)과 spin(bet, 빈 목록)은 완전히 같고, 지정값이 있어도 RNG는 평소처럼 소비된다
+func _test_forced_stops_keep_rng_sequence() -> void:
+	var plain: SlotLogic = _new_logic()
+	var explicit: SlotLogic = _new_logic()
+	var same: bool = true
+	for i: int in 300:
+		var a: SpinResult = plain.spin(FULL_BET)
+		var b: SpinResult = explicit.spin(FULL_BET, PackedInt32Array())
+		same = same and a.stops == b.stops and a.line_payout == b.line_payout and a.fever_bonus == b.fever_bonus and a.pool_won == b.pool_won
+	_check(same, "forced_stops를 비우거나 생략하면 같은 시드 결과가 300회 완전히 같음 (기존 동작 불변)")
+	var base: SlotLogic = _new_logic()
+	var forced: SlotLogic = _new_logic()
+	var rolled: SpinResult = base.spin(FULL_BET)
+	var shown: SpinResult = forced.spin(FULL_BET, PackedInt32Array([0, 0, 0]))
+	_check(shown.stops == PackedInt32Array([0, 0, 0]) and rolled.stops.size() == 3, "지정한 정지 위치가 그 판의 결과가 됨")
+	_check(shown.stops == PackedInt32Array([0, 0, 0]) and shown.line_payout == 80, "지정 판도 기존 규칙으로 계산 (체리 9칸 → 80)")
+	var follows: bool = true
+	for i: int in 100:
+		follows = follows and base.spin(FULL_BET).stops == forced.spin(FULL_BET).stops
+	_check(follows, "강제 판 뒤의 시드 순서가 변하지 않음 (다음 100판이 강제하지 않은 경우와 같은 정지 위치)")
+	var bad_size: SlotLogic = _new_logic()
+	var bad_range: SlotLogic = _new_logic()
+	var negative: SlotLogic = _new_logic()
+	var reference: SlotLogic = _new_logic()
+	var expected: PackedInt32Array = reference.spin(FULL_BET).stops
+	_check(bad_size.spin(FULL_BET, PackedInt32Array([0, 0])).stops == expected, "개수가 맞지 않는 지정값은 무시")
+	_check(bad_range.spin(FULL_BET, PackedInt32Array([0, 99, 0])).stops == expected, "범위 밖 지정값은 무시")
+	_check(negative.spin(FULL_BET, PackedInt32Array([-1, 0, 0])).stops == expected, "음수 지정값은 무시")
+
+
+func _test_set_fever_count() -> void:
+	var logic: SlotLogic = _new_logic()
+	_check(logic.set_fever_count(C, 1, FULL_BET) and logic.get_fever_counts()[C] == 1, "체리 카운터를 1로 설정")
+	var all_cherry: PackedInt32Array = PackedInt32Array([0, 0, 0])
+	var result: SpinResult = logic.resolve_stops(all_cherry, FULL_BET)
+	_check(result.fever_triggers == PackedStringArray([C]), "설정 뒤 첫 체리 당첨에서 기존 규칙대로 체리 피버 발동")
+	_check(result.fever_bonuses[C] == 160, "피버 보너스 = 20 × 8 (평균 베팅 합을 (초기-설정) × 기준 베팅으로 채움)")
+	_check(logic.get_fever_counts()[C] == 5, "발동 뒤 카운터 초기값으로 복귀")
+	var other: SlotLogic = _new_logic()
+	other.set_fever_count(C, 3, 16)
+	var after: SpinResult = other.resolve_stops(all_cherry, 16)
+	_check(other.get_fever_counts()[C] == 2 and after.fever_triggers.is_empty(), "카운터 3으로 설정하면 한 번 당첨 뒤 2 (발동 안 함)")
+	var guard: SlotLogic = _new_logic()
+	_check(not guard.set_fever_count("BELL", 1, FULL_BET) and not guard.set_fever_count(C, 0, FULL_BET) and not guard.set_fever_count(C, 6, FULL_BET) and not guard.set_fever_count(C, 1, 0), "모르는 심볼·0·초기값 초과·기준 베팅 0은 거절")
+	_check(guard.get_fever_counts()[C] == 5 and guard.get_fever_counts()[G] == 2, "거절하면 카운터 그대로")
+	_check(guard.set_fever_count(S, 1, FULL_BET) and guard.get_fever_counts()[S] == 1, "초기 카운트가 1인 세븐은 1 그대로 허용")
+
+
+func _test_set_pool() -> void:
+	var logic: SlotLogic = _new_logic()
+	_check(logic.set_pool(1234) and logic.get_pool() == 1234, "풀 금액 설정")
+	logic.resolve_stops(PackedInt32Array([6, 7, 6]), FULL_BET)
+	_check(logic.get_pool() == 1234, "설정 뒤 적립은 기존 규칙 (+0.4 → 표시 1234)")
+	for i: int in 2:
+		logic.resolve_stops(PackedInt32Array([6, 7, 6]), FULL_BET)
+	_check(logic.get_pool() == 1235, "적립이 계속 쌓여 1235.2 → 표시 1235")
+	var win: SpinResult = logic.resolve_stops(PackedInt32Array([3, 3, 3]), FULL_BET)
+	_check(win.pool_won == 1235 and logic.get_pool() == 500, "세븐 피버로 설정한 풀을 기존 규칙대로 획득, 풀은 초기값 500으로")
+	_check(not logic.set_pool(-1) and logic.get_pool() == 500, "음수 풀은 거절")
+	_check(logic.set_pool(0) and logic.get_pool() == 0, "0은 허용")
+
+
+func _test_find_stops_with_win() -> void:
+	var logic: SlotLogic = _new_logic()
+	var full_bets: PackedInt32Array = logic.distribute_bet(FULL_BET)
+	var counts_before: Dictionary[String, int] = logic.get_fever_counts()
+	var pool_before: int = logic.get_pool()
+	var all_ok: bool = true
+	for symbol: String in [C, G, S]:
+		var stops: PackedInt32Array = logic.find_stops_with_win(symbol, full_bets)
+		var found: bool = false
+		if stops.size() == 3:
+			for win: LineWin in logic.evaluate_lines(logic.build_grid(stops), full_bets):
+				found = found or win.symbol == symbol
+		all_ok = all_ok and found
+	_check(all_ok, "체리·포도·세븐: 찾은 정지 위치에서 그 심볼의 라인 당첨이 실제로 나옴")
+	_check(logic.find_stops_with_win(C, full_bets) == PackedInt32Array([0, 0, 0]), "가장 앞선 조합을 돌려줌 (체리: 0,0,0)")
+	_check(logic.find_stops_with_win("BELL", full_bets).is_empty(), "스트립에 없는 심볼은 빈 목록")
+	var line_a_only: PackedInt32Array = logic.distribute_bet(1)
+	var one_line: PackedInt32Array = logic.find_stops_with_win(S, line_a_only)
+	var line_a_win: bool = false
+	if one_line.size() == 3:
+		for win: LineWin in logic.evaluate_lines(logic.build_grid(one_line), line_a_only):
+			line_a_win = line_a_win or win.symbol == S
+	_check(line_a_win, "베팅 1(라인 A만)에서도 그 라인의 당첨으로 찾음")
+	_check(logic.get_fever_counts().hash() == counts_before.hash() and logic.get_pool() == pool_before, "찾기만 하면 카운터·풀이 변하지 않음")
+	var fresh: SlotLogic = _new_logic()
+	_check(logic.spin(FULL_BET).stops == fresh.spin(FULL_BET).stops, "찾기는 RNG를 쓰지 않음 (다음 스핀이 새 로직과 같음)")

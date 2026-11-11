@@ -2,7 +2,7 @@ class_name TitleScreen
 extends Control
 ## 시작 화면(7-C): 로고 + START / EXIT + 깜빡이는 PRESS START. 게임 규칙·결과 계산과 무관하다.
 ## START는 GameState.new_game()을 딱 한 번 부르고, button.wav가 끝난 뒤 게임 화면(main.tscn)으로 넘어간다.
-## 조작: SPACE / ENTER = START, ESC = EXIT, 마우스 클릭, F2 = 운영자 설정(숨김 키). F1·F6 같은 개발용 키는 이 화면에서 무시한다.
+## 조작: SPACE / ENTER = START, ESC = EXIT, 마우스 클릭, F2 = 운영자 설정(숨김 키), F3 = 테스트 모드 켜기/끄기(개발 빌드에서만). F1·F6 같은 개발용 키는 이 화면에서 무시한다.
 ## 설정 화면이 열려 있는 동안에는 모든 키를 설정 화면이 처리한다 (Esc는 설정만 닫고 게임을 종료하지 않는다).
 ## 화면 배치는 승인된 미리보기 assets/_preview/7c_title_logo_x2.png와 같다 (기존 로고 ×2, 기존 벽지·프레임·버튼·패널 재사용).
 
@@ -37,7 +37,10 @@ const HINT_TEXT: String = "SPACE / ENTER  시작     ESC  종료"
 const BEST_Y: float = 324.0
 const BEST_COLOR: Color = Color("c8cce8")
 const DEV_COLOR: Color = Color("ff9a1f")
+const TEST_MODE_COLOR: Color = Color("ff4a4a")
 const DEV_TEXT: String = "DEV"
+const TEST_MODE_TEXT: String = "TEST MODE"
+const TEST_MODE_SIZE: Vector2 = Vector2(100, 16)
 const DEV_SIZE: Vector2 = Vector2(48, 16)
 const DEV_MARGIN: float = 6.0
 
@@ -53,6 +56,7 @@ var _exit_button: Button
 var _logo: TextureRect
 var _settings: SettingsScreen
 var _best: Label
+var _test_mode_label: Label
 var _blink_time: float = 0.0
 ## START가 받아들여진 뒤 true. 이후 모든 입력(START·EXIT·키)을 무시한다.
 var _starting: bool = false
@@ -130,6 +134,20 @@ func open_settings() -> bool:
 	return true
 
 
+## 테스트 모드를 켜고 끈다 (F3). 개발 빌드에서만, START가 받아들여지기 전·설정 화면이 닫혀 있을 때만. 바꿨으면 true.
+## 저장하지 않는다 (실행할 때마다 꺼진 채 시작). START로 들어가면 켜진 채 유지되고 게임 화면 F3가 테스트 메뉴를 연다.
+func toggle_test_mode() -> bool:
+	if not GameState.dev_build or _starting or _settings.is_open():
+		return false
+	GameState.test_mode = not GameState.test_mode
+	_refresh_test_mode_label()
+	return true
+
+
+func test_mode_label() -> Label:
+	return _test_mode_label
+
+
 func settings_screen() -> SettingsScreen:
 	return _settings
 
@@ -182,11 +200,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			press_exit()
 		KEY_F2:
 			open_settings()
+		KEY_F3:
+			toggle_test_mode()
 
 
 func _button_sound_length() -> float:
 	var stream: AudioStream = load(SoundBank.sound_path(SoundBank.NAME_BUTTON)) as AudioStream
 	return stream.get_length() if stream != null else 0.0
+
+
+func _refresh_test_mode_label() -> void:
+	if _test_mode_label != null:
+		_test_mode_label.visible = GameState.test_mode
 
 
 func _refresh_best() -> void:
@@ -309,6 +334,18 @@ func _build_texts() -> void:
 		add_child(dev)
 		dev.position = Vector2(BOTTOM_RECT.end.x - DEV_SIZE.x - DEV_MARGIN, BOTTOM_RECT.position.y + DEV_MARGIN)
 		dev.size = DEV_SIZE
+		# 테스트 모드가 켜져 있으면 DEV 아래에 "TEST MODE"
+		_test_mode_label = Label.new()
+		_test_mode_label.name = "TestModeLabel"
+		_test_mode_label.text = TEST_MODE_TEXT
+		_test_mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_test_mode_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		UiFont.apply(_test_mode_label, UiFont.Face.SMALL)
+		_test_mode_label.add_theme_color_override("font_color", TEST_MODE_COLOR)
+		add_child(_test_mode_label)
+		_test_mode_label.position = Vector2(BOTTOM_RECT.end.x - TEST_MODE_SIZE.x - DEV_MARGIN, dev.position.y + DEV_SIZE.y)
+		_test_mode_label.size = TEST_MODE_SIZE
+		_refresh_test_mode_label()
 	_refresh_best()
 
 

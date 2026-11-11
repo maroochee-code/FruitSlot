@@ -49,6 +49,12 @@ func _ready() -> void:
 	_test_title_start()
 	_test_user_values()
 	_test_high_score_hook()
+	_test_mode_start_values()
+	_test_tools_grant_credit()
+	_test_tools_fever_and_pool()
+	_test_force_next_win()
+	_test_results_unchanged_by_test_mode()
+	_test_tainted_and_high_score()
 	for state: Node in _auto_states:
 		state.free()
 	_auto_states.clear()
@@ -969,4 +975,210 @@ func _test_high_score_hook() -> void:
 	_drain_to_game_over(low)
 	_check(HighScore.active().best_peak_credit >= peak, "더 낮은 판의 GAME OVER는 최고 기록을 낮추지 않음")
 	low.free()
+	UserSettings.configure(false)
+
+
+# ---------------------------------------------------------------- 8-B 테스트 모드
+
+## 한 판을 처음부터 끝까지 돌린다 (START → 정산). 크레딧·베팅은 직접 정해 둔다.
+func _spin_once(state: Node, spin_bet: int = LAST_BET) -> SpinResult:
+	state.credit = 100000
+	state.bet = spin_bet
+	var result: SpinResult = state.start_spin()
+	state.settle_spin()
+	return result
+
+
+func _test_mode_start_values() -> void:
+	# 트리 밖에서 만든 인스턴스(_ready 없음)는 클래스 기본값(켜짐)을 쓴다 → 기존 COIN 검사가 그대로 유지됨
+	var plain: Node = _fresh()
+	_check(plain.test_mode and plain.dev_build == OS.is_debug_build(), "트리 밖 인스턴스: 테스트 모드 기본값 켜짐 (기존 테스트 호환)")
+	plain.free()
+	# 게임을 켠 것처럼 트리에 넣으면(_ready) 테스트 모드가 꺼진 채 시작
+	var booted: Node = load(GAME_STATE_SCRIPT).new()
+	add_child(booted)
+	_check(booted.ready_ok and not booted.test_mode, "게임을 켜면(_ready) 테스트 모드는 꺼진 상태로 시작")
+	booted.dev_build = true
+	_check(not booted.coin_allowed(), "개발 빌드여도 테스트 모드가 꺼져 있으면 COIN 불가")
+	booted.insert_coin()
+	_check(booted.credit == 0 and not booted.run_tainted, "꺼진 상태의 COIN은 아무 일도 안 함")
+	booted.test_mode = true
+	_check(booted.coin_allowed(), "테스트 모드를 켜면 COIN 가능")
+	booted.dev_build = false
+	_check(not booted.coin_allowed(), "릴리즈 빌드는 테스트 모드가 켜져 있어도 COIN 불가")
+	booted.free()
+
+
+func _test_tools_grant_credit() -> void:
+	var state: Node = _fresh(41)
+	var grants: Array[String] = []
+	state.connect("credit_granted", func(amount: int, reason: StringName) -> void: grants.append("%d %s" % [amount, reason]))
+	_check(state.test_grant_credit(state.coin_amount * 10) and state.credit == state.coin_amount * 10, "크레딧 지급: coin_amount × 10")
+	_check(grants == ["%d test_coin" % (state.coin_amount * 10)] and state.run_tainted, "grant_credit(test_coin)을 거치고 테스트 판 표시")
+	_check(not state.test_grant_credit(0) and not state.test_grant_credit(-5) and state.credit == state.coin_amount * 10, "0·음수 지급은 거절")
+	state.test_mode = false
+	_check(not state.test_grant_credit(100) and state.credit == state.coin_amount * 10, "테스트 모드 꺼짐: 지급 거절")
+	state.test_mode = true
+	state.dev_build = false
+	_check(not state.test_grant_credit(100) and state.credit == state.coin_amount * 10, "릴리즈 빌드: 지급 거절")
+	state.dev_build = true
+	state.bet = LAST_BET
+	state.start_spin()
+	var credit_during: int = state.credit
+	_check(not state.test_grant_credit(100) and state.credit == credit_during, "릴 회전 중에는 거절")
+	state.settle_spin()
+	state.free()
+	# 크레딧이 0이 된 GAME OVER 중에도 기존 grant_credit 규칙대로 GAME OVER가 풀림 (새 규칙 없음)
+	var over: Node = _game_over_state({}, 42)
+	over.test_mode = true
+	over.dev_build = true
+	_check(over.is_game_over() and over.test_grant_credit(500) and not over.is_game_over(), "GAME OVER 중 지급: 기존 grant_credit 규칙대로 GAME OVER 해제")
+	over.free()
+
+
+func _test_tools_fever_and_pool() -> void:
+	var state: Node = _fresh(43)
+	var changes: Array[int] = [0]
+	state.connect("test_state_changed", func() -> void: changes[0] += 1)
+	_check(state.test_set_fever_count("CHERRY", 1) and state.get_fever_counts()["CHERRY"] == 1, "체리 카운터를 1로 설정")
+	_check(state.run_tainted and changes[0] == 1, "설정하면 테스트 판 표시 + 상태 변경 시그널 1번")
+	var untouched: bool = state.get_fever_counts()["GRAPE"] == _data.fever_initial_counts["GRAPE"] and state.get_fever_counts()["BELL"] == _data.fever_initial_counts["BELL"]
+	_check(untouched, "다른 심볼 카운터는 그대로")
+	_check(not state.test_set_fever_count("LEMON", 1) and not state.test_set_fever_count("CHERRY", 0) and not state.test_set_fever_count("CHERRY", _data.fever_initial_counts["CHERRY"] + 1), "모르는 심볼·0·초기값 초과는 거절")
+	_check(changes[0] == 1, "거절하면 시그널도 없음")
+	_check(state.test_set_pool(1500) and state.get_pool() == 1500 and changes[0] == 2, "풀 금액 설정 + 시그널")
+	_check(not state.test_set_pool(-1) and state.get_pool() == 1500, "음수 풀은 거절")
+	state.test_mode = false
+	_check(not state.test_set_pool(10) and not state.test_set_fever_count("GRAPE", 1) and state.get_pool() == 1500, "테스트 모드 꺼짐: 상태 설정 거절")
+	state.test_mode = true
+	state.dev_build = false
+	_check(not state.test_set_pool(10) and not state.test_set_fever_count("GRAPE", 1) and state.get_pool() == 1500, "릴리즈 빌드: 상태 설정 거절")
+	state.dev_build = true
+	state.credit = 100
+	state.bet = LAST_BET
+	state.start_spin()
+	_check(not state.test_set_pool(10) and not state.test_set_fever_count("GRAPE", 1) and state.get_pool() != 10, "릴 회전 중에는 상태 설정 거절")
+	state.settle_spin()
+	state.free()
+	# 설정한 카운터가 기존 규칙으로 피버·보너스로 이어짐 (평균 베팅 합 = (초기-설정) × max(BET, 피버 최소 베팅))
+	for bet_value: int in [16, 0]:
+		var flow: Node = _fresh(44)
+		flow.bet = bet_value
+		flow.test_set_fever_count("CHERRY", 1)
+		flow.test_force_next_win("CHERRY")
+		var trigger_bet: int = bet_value if bet_value > 0 else LAST_BET
+		var result: SpinResult = _spin_once(flow, trigger_bet)
+		var expected: int = int(_data.fever_multipliers["CHERRY"]) * trigger_bet
+		_check(result.fever_triggers.has("CHERRY") and result.fever_bonuses["CHERRY"] == expected, "카운터 1 설정(BET %d) → 체리 당첨에서 피버 발동, 보너스 = 배수 × %d" % [bet_value, trigger_bet])
+		_check(flow.get_fever_counts()["CHERRY"] == _data.fever_initial_counts["CHERRY"], "발동 뒤 카운터는 초기값으로")
+		flow.free()
+	# 설정한 풀을 세븐 피버가 기존 규칙으로 획득하고 풀은 초기값으로 돌아감
+	var pool_flow: Node = _fresh(45)
+	pool_flow.test_set_pool(1800)
+	pool_flow.test_force_next_win("SEVEN")
+	var pool_result: SpinResult = _spin_once(pool_flow)
+	var contribution: int = roundi(LAST_BET * _data.pool_contribution_rate)
+	_check(pool_result.pool_won >= 1800 and pool_result.pool_won <= 1800 + contribution + 1 and pool_flow.get_pool() == _data.pool_initial, "설정한 풀 1800을 세븐 피버로 획득 (적립 포함), 풀은 초기값으로")
+	_check(pool_result.fever_triggers.has("SEVEN") and pool_result.total_payout() == pool_result.line_payout + pool_result.fever_bonus + pool_result.pool_won, "지급 = 라인 + 피버 + 풀 (기존 규칙)")
+	pool_flow.free()
+
+
+func _test_force_next_win() -> void:
+	var state: Node = _fresh(46)
+	_check(state.forced_symbol() == "", "처음엔 예약 없음")
+	_check(state.test_force_next_win("SEVEN") and state.forced_symbol() == "SEVEN" and state.run_tainted, "다음 판 세븐 당첨 예약, 테스트 판 표시")
+	_check(not state.test_force_next_win("LEMON") and state.forced_symbol() == "SEVEN", "모르는 심볼은 거절하고 기존 예약 유지")
+	state.credit = 100000
+	state.bet = LAST_BET
+	var result: SpinResult = state.start_spin()
+	var seven_line: bool = false
+	for win: LineWin in result.line_wins:
+		seven_line = seven_line or win.symbol == "SEVEN"
+	_check(seven_line and result.fever_triggers.has("SEVEN") and result.pool_won > 0, "예약한 판에 세븐 라인 당첨 + 세븐 피버 + 풀 획득 (기존 규칙)")
+	_check(state.forced_symbol() == "", "예약은 1회용 (판이 시작되면 지워짐)")
+	var credit_before_settle: int = state.credit
+	state.settle_spin()
+	_check(state.credit == credit_before_settle + result.total_payout() and state.run_tainted, "정산은 기존 규칙 그대로 (당첨금 합산), 테스트 판")
+	_check(state.test_force_next_win("CHERRY") and state.test_force_next_win("") and state.forced_symbol() == "", "빈 문자열로 예약 취소")
+	var normal: SpinResult = _spin_once(state)
+	_check(normal != null and state.forced_symbol() == "", "취소한 뒤의 판은 평소 판")
+	# 예약 뒤 테스트 모드가 꺼지면(또는 릴리즈) 지정값이 들어가지 않고 예약도 지워짐
+	var guard: Node = _fresh(47)
+	var twin: Node = _fresh(47)
+	guard.test_force_next_win("SEVEN")
+	guard.test_mode = false
+	var guarded: SpinResult = _spin_once(guard)
+	var plain: SpinResult = _spin_once(twin)
+	_check(guarded.stops == plain.stops and guard.forced_symbol() == "", "예약 뒤 테스트 모드가 꺼지면 지정값이 들어가지 않음 (같은 시드와 같은 결과)")
+	guard.free()
+	twin.free()
+	var release: Node = _fresh(48)
+	release.dev_build = false
+	_check(not release.test_force_next_win("SEVEN") and release.forced_symbol() == "", "릴리즈 빌드: 예약 자체가 거절")
+	release.free()
+	var busy: Node = _fresh(49)
+	busy.credit = 100
+	busy.bet = LAST_BET
+	busy.start_spin()
+	_check(not busy.test_force_next_win("SEVEN"), "릴 회전 중에는 예약 거절")
+	busy.settle_spin()
+	busy.free()
+	state.free()
+
+
+## 테스트 도구를 쓰지 않으면 결과가 로직과 완전히 같고, 강제 판 뒤의 시드 순서도 변하지 않는다
+func _test_results_unchanged_by_test_mode() -> void:
+	var off: Node = _fresh(51)
+	off.test_mode = false
+	var on: Node = _fresh(51)
+	var bare: SlotLogic = SlotLogic.new(_data, 51)
+	var same: bool = true
+	for i: int in 300:
+		var a: SpinResult = _spin_once(off)
+		var b: SpinResult = _spin_once(on)
+		var c: SpinResult = bare.spin(LAST_BET)
+		same = same and a.stops == b.stops and b.stops == c.stops and a.total_payout() == c.total_payout()
+	_check(same, "테스트 모드 꺼짐/켜짐/순수 로직: 같은 시드 300판 정지 위치·지급이 완전히 같음 (도구를 쓰지 않으면 불변)")
+	_check(not on.run_tainted and not off.run_tainted, "테스트 모드를 켜 두기만 하면 테스트 판 표시가 켜지지 않음")
+	off.free()
+	on.free()
+	var forced: Node = _fresh(52)
+	var reference: Node = _fresh(52)
+	forced.test_force_next_win("SEVEN")
+	_spin_once(forced)
+	_spin_once(reference)
+	var follows: bool = true
+	for i: int in 100:
+		follows = follows and _spin_once(forced).stops == _spin_once(reference).stops
+	_check(follows, "강제한 판 뒤의 100판은 강제하지 않은 경우와 같은 정지 위치 (RNG를 평소처럼 소비)")
+	forced.free()
+	reference.free()
+
+
+func _test_tainted_and_high_score() -> void:
+	UserSettings.configure(false)
+	# 도구를 쓴 판은 GAME OVER가 되어도 최고 기록에 들어가지 않고, NEW GAME에서 표시와 예약이 풀림
+	for tool_index: int in 3:
+		var state: Node = _fresh(60 + tool_index)
+		state.new_game()
+		_check(not state.run_tainted, "도구 사용 전에는 테스트 판 표시 없음 (%d)" % tool_index)
+		match tool_index:
+			0:
+				state.test_set_pool(900)
+			1:
+				state.test_set_fever_count("GRAPE", 1)
+			_:
+				state.test_force_next_win("CHERRY")
+		_check(state.run_tainted, "도구 사용 뒤 테스트 판 표시 (%d)" % tool_index)
+		_drain_to_game_over(state)
+		_check(HighScore.active().best_peak_credit == 0, "테스트 도구를 쓴 판의 GAME OVER는 최고 기록에 들어가지 않음 (%d)" % tool_index)
+		state.free()
+	var again: Node = _fresh(63)
+	again.new_game()
+	again.test_force_next_win("SEVEN")
+	again.new_game()
+	_check(not again.run_tainted and again.forced_symbol() == "", "NEW GAME: 테스트 판 표시와 예약이 풀림")
+	_drain_to_game_over(again)
+	_check(HighScore.active().best_peak_credit == again.run_peak_credit and again.run_peak_credit > 0, "도구를 쓰지 않은 판은 평소처럼 최고 기록으로 남음")
+	again.free()
 	UserSettings.configure(false)

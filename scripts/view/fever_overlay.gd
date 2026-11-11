@@ -71,6 +71,9 @@ var _kind: StringName = KIND_FEVER
 var _title_text: String = ""
 var _bg_frame: int = 0
 var _banner_variant: int = 0
+## 재생 중 배경 프레임·배너 색이 번갈아 바뀌는 간격 (초). 0 이하면 움직이지 않는다 (기본, set_motion으로 켠다)
+var _bg_frame_sec: float = 0.0
+var _banner_flash_sec: float = 0.0
 var _bg: TextureRect = TextureRect.new()
 var _bg_textures: Dictionary = {}
 var _banners: Dictionary = {}
@@ -157,6 +160,7 @@ func play(steps: Array[Dictionary], step_sec: float, gap_sec: float, skip_lock_s
 	_finished_count = 0
 	_playing = true
 	visible = true
+	_apply_motion()
 	_update()
 
 
@@ -188,6 +192,13 @@ func shown_texts() -> Dictionary:
 	return { "title": _title_text, "name": _name.text if _name.visible else "", "bonus": _bonus.text }
 
 
+## 배경 프레임·배너 색을 재생 시간(_elapsed)에 맞춰 번갈아 보이게 한다. 간격(초)은 feel.json의 fever_bg_frame_sec·fever_banner_flash_sec.
+## 0 이하를 주면 그 항목은 움직이지 않는다. 화면 표시만 바꾸고 단계·시간·결과에는 영향이 없다. main과 테스트 메뉴가 play() 전에 부른다.
+func set_motion(bg_frame_sec: float, banner_flash_sec: float) -> void:
+	_bg_frame_sec = bg_frame_sec
+	_banner_flash_sec = banner_flash_sec
+
+
 ## 배경 프레임 번호(0~2)를 바꾼다. 6-F의 움직임과 미리보기 씬이 쓴다.
 func set_bg_frame(index: int) -> void:
 	_bg_frame = posmod(index, BG_FRAME_COUNT)
@@ -208,6 +219,7 @@ func advance(delta: float) -> void:
 	if not _playing:
 		return
 	_elapsed += delta
+	_apply_motion()
 	_update()
 
 
@@ -293,6 +305,14 @@ func _setup_art(rect: TextureRect, attach: bool = true) -> void:
 
 static func _asset_key(kind: StringName) -> String:
 	return "fever" if kind == KIND_FEVER else "pool"
+
+
+## 재생 시간에 맞는 배경 프레임·배너 색 번호를 정한다 (실제 그림은 _apply_step이 적용). 재생이 끝나면 advance가 멈추므로 더는 바뀌지 않는다.
+func _apply_motion() -> void:
+	if _bg_frame_sec > 0.0:
+		_bg_frame = posmod(int(_elapsed / _bg_frame_sec), BG_FRAME_COUNT)
+	if _banner_flash_sec > 0.0:
+		_banner_variant = posmod(int(_elapsed / _banner_flash_sec), BANNER_VARIANTS.size())
 
 
 func _update() -> void:

@@ -37,6 +37,8 @@ signal credit_granted(amount: int, reason: StringName)
 signal game_over
 ## NEW GAME으로 크레딧·POOL·피버 카운터·이어하기 횟수가 처음 상태로 돌아갔다 (화면이 오른쪽 패널을 다시 그리는 용도)
 signal new_game_started
+## 테스트 모드가 피버 카운터·풀을 바꿨다 (화면이 오른쪽 패널을 다시 그리는 용도). 크레딧 지급은 credit_changed / credit_granted로 알린다.
+signal test_state_changed
 
 var credit: int = 0
 var bet: int = 0
@@ -52,7 +54,8 @@ var continue_max: int = 0
 var continues_left: int = 0
 ## 개발 빌드인가. 내보낸 릴리즈 exe에서는 false. 테스트가 릴리즈 상황을 흉내 내려고 바꿔 넣을 수 있다.
 var dev_build: bool = OS.is_debug_build()
-## 테스트 모드 스위치. 지금은 항상 켜짐이고, 8-B에서 설정 화면이 이 값을 바꾼다.
+## 테스트 모드 스위치(8-B). 클래스 기본값은 켜짐이지만(트리 밖에서 만드는 테스트용 인스턴스), 게임을 켜면 _ready()가 꺼진 상태로 내린다.
+## 시작 화면의 F3로 켠다 (개발 빌드에서만). 저장하지 않으므로 실행할 때마다 꺼진 채 시작한다.
 var test_mode: bool = true
 ## 이번 판(NEW GAME 이후)의 기록. 메모리 집계만 하고 저장하지 않는다 (저장은 8단계).
 var run_peak_credit: int = 0
@@ -80,6 +83,8 @@ var _data: BalanceData
 ## initialize()에 넘어온 기본 economy 값과 AUTO 정지 기준 (운영자 설정은 이 위에 얹고, 설정을 지우면 여기로 돌아간다)
 var _base_economy: Dictionary = {}
 var _base_stop_on_win: int = 0
+## 테스트 모드가 예약한 "다음 판 당첨 심볼" (1회용)
+var _forced_symbol: String = ""
 ## 정산 도중 AUTO가 꺼졌을 때, auto_stopped를 spin_finished 다음에 보내기 위해 이유를 잠시 들고 있는다.
 var _deferred_stop_reason: StringName = &""
 var _auto: AutoSpin = AutoSpin.new()
@@ -102,6 +107,8 @@ func _ready() -> void:
 	initialize(data, economy, int(Time.get_ticks_usec()))
 	# 운영자 설정(user://settings.json)이 있으면 economy·AUTO 값 위에 덮어쓴다 (헤드리스에서는 꺼져 있어 기본값 그대로)
 	apply_user_values()
+	# 테스트 모드는 매번 꺼진 채 시작한다 (시작 화면 F3로 켬)
+	test_mode = false
 
 
 ## economy.json을 읽어 검사한다. 문제가 있으면 빈 사전을 돌려주고 에러를 출력한다.
@@ -146,6 +153,7 @@ func initialize(data: BalanceData, economy: Dictionary, rng_seed: int) -> void:
 	_auto.stop_on_win_at = data.auto_stop_on_win_at
 	_base_economy = economy.duplicate()
 	_base_stop_on_win = data.auto_stop_on_win_at
+	_forced_symbol = ""
 	coin_amount = int(economy["coin_amount"])
 	start_credit = int(economy["start_credit"])
 	continue_credit = int(economy["continue_credit"])
@@ -224,7 +232,7 @@ func can_start() -> bool:
 
 
 ## COIN을 쓸 수 있는가. 개발 빌드이고 테스트 모드가 켜져 있을 때만 true.
-## 내보낸 릴리즈 빌드에서는 항상 false다 (8-B의 테스트 모드 스위치는 test_mode에 연결한다).
+## 내보낸 릴리즈 빌드에서는 항상 false다. test_mode는 시작 화면 F3로 켠다(8-B, 게임을 켤 때마다 꺼진 채 시작).
 func coin_allowed() -> bool:
 	return dev_build and test_mode
 
@@ -286,6 +294,7 @@ func new_game() -> bool:
 		return false
 	stop_auto(AutoSpin.REASON_USER)
 	_logic.reset_state()
+	_forced_symbol = ""
 	_game_over = false
 	_bet_at_game_over = 0
 	continues_left = continue_max
@@ -346,6 +355,74 @@ func cancel_bet() -> bool:
 	return true
 
 
+## 테스트 모드 도구(8-B)를 쓸 수 있는가: 개발 빌드 + 테스트 모드이고 릴이 도는 중이 아닐 때
+func test_tools_allowed() -> bool:
+	return coin_allowed() and not spinning
+
+
+## 테스트 모드: 크레딧 지급. 기존 입구 grant_credit(test_coin)을 그대로 거치므로 "테스트 판" 표시가 같이 켜진다.
+func test_grant_credit(amount: int) -> bool:
+	if not test_tools_allowed() or amount < 1:
+		return false
+	grant_credit(amount, GRANT_TEST_COIN)
+	return true
+
+
+## 테스트 모드: 피버 카운터를 count로 정한다. 평균 베팅 합은 (초기 카운트 − count) × max(현재 BET, 피버 최소 베팅)으로 채운다.
+func test_set_fever_count(symbol: String, count: int) -> bool:
+	if not test_tools_allowed():
+		return false
+	var reference_bet: int = maxi(bet, _data.fever_min_total_bet)
+	if not _logic.set_fever_count(symbol, count, reference_bet):
+		return false
+	run_tainted = true
+	test_state_changed.emit()
+	return true
+
+
+## 테스트 모드: 풀 금액을 정한다.
+func test_set_pool(amount: int) -> bool:
+	if not test_tools_allowed() or not _logic.set_pool(amount):
+		return false
+	run_tainted = true
+	test_state_changed.emit()
+	return true
+
+
+## 테스트 모드: 다음 한 판에 symbol의 라인 당첨이 나오게 예약한다 (1회용, 취소하려면 빈 문자열).
+## 정지 위치는 그 판이 시작될 때의 베팅 기준으로 찾아 그 순간 RNG 결과를 바꿔치기한다. 예약한 판은 "테스트 판"으로 표시된다.
+func test_force_next_win(symbol: String) -> bool:
+	if not test_tools_allowed():
+		return false
+	if symbol != "" and not _data.fever_symbols.has(symbol):
+		return false
+	_forced_symbol = symbol
+	if symbol != "":
+		run_tainted = true
+	test_state_changed.emit()
+	return true
+
+
+## 예약된 강제 당첨 심볼 (없으면 빈 문자열)
+func forced_symbol() -> String:
+	return _forced_symbol
+
+
+## START 순간에만 부른다. 예약이 있고 개발 빌드 + 테스트 모드이면 지정 정지 위치를 돌려주고 예약을 지운다(1회용).
+## 그 밖에는 항상 빈 목록이라 spin()이 평소와 완전히 같게 동작한다.
+func _take_forced_stops() -> PackedInt32Array:
+	if _forced_symbol == "":
+		return PackedInt32Array()
+	var symbol: String = _forced_symbol
+	_forced_symbol = ""
+	if not coin_allowed():
+		return PackedInt32Array()
+	var stops: PackedInt32Array = _logic.find_stops_with_win(symbol, _logic.distribute_bet(bet))
+	if not stops.is_empty():
+		run_tainted = true
+	return stops
+
+
 ## START 1단계. 크레딧에서 베팅을 차감하고 결과를 확정한다. 당첨금은 아직 더하지 않는다.
 ## 화면은 spin_started를 받아 릴을 돌리고, 모두 멈추면 settle_spin()을 부른다. 거절되면 null.
 func start_spin() -> SpinResult:
@@ -360,7 +437,7 @@ func start_spin() -> SpinResult:
 	credit -= bet
 	credit_changed.emit(credit)
 	_set_win(0)
-	var result: SpinResult = _logic.spin(bet)
+	var result: SpinResult = _logic.spin(bet, _take_forced_stops())
 	if result == null:
 		credit += bet
 		credit_changed.emit(credit)

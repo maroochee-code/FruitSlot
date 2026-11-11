@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## 0.21.1 — 2026-11-11 (6-F 연결: 피버·풀 연출 배경 움직임)
+
+### 수정
+- FEVER!·POOL GET! 연출의 방사형 배경 프레임(3장)과 배너 색(a/b)이 재생 중 번갈아 바뀜. 6-E에서 `set_bg_frame()`·`set_banner_variant()`만 만들어 두고 main에 연결하지 않았던 것을 연결(퇴행 아님). `FeverOverlay.set_motion(bg_sec, banner_sec)` + `advance()`가 재생 시간(`_elapsed`)으로 프레임을 계산하고, 끝나거나 건너뛰면 멈추며 다시 재생하면 0번부터. 간격 0이면 정지(기본). 풀 단계도 같은 방식. main과 테스트 메뉴 미리보기에 동시 적용
+- `feel.json` 새 키 `fever_bg_frame_sec`(0.25, 0.05~2), `fever_banner_flash_sec`(0.15, 0.05~2) (`docs/feel.md`)
+- `scenes/test/overlay_preview.gd`: 자체 상수(0.25·0.15)와 프레임 계산을 지우고 feel.json 값 + `set_motion`을 사용. M 키 토글은 그대로(꺼짐 = 간격 0), A·B 키는 움직임을 끄고 한 장씩 넘김
+- 화면 표시만 변경. 로직·결과·크레딧·balance.json 변경 없음
+- 테스트: view_test +22 (932)
+
+## 0.21.0 — 2026-11-11 (8-B: 테스트 모드)
+
+### 추가
+- 테스트 모드(개발 빌드 전용): 시작 화면 **F3**로 켜고 끔(켜면 DEV 라벨 아래 `TEST MODE`), 게임 화면 **F3**로 테스트 메뉴(`TestMenu`, `scripts/view/test_menu.gd`). 저장하지 않으며 게임을 켤 때마다 꺼진 채 시작(`GameState._ready()`가 `test_mode = false`, 클래스 기본값은 true라 트리 밖 테스트 인스턴스는 기존대로). COIN은 켜져 있을 때만 활성(`coin_allowed()`)
+- 메뉴 탭 3개: **미리보기**(FEVER!·POOL GET!·정산 연출 소/중/대·GAME OVER 화면·전구 모양, 별도 인스턴스라 게임 상태·WIN/CREDIT 칸 불변) / **상태 설정**(크레딧 지급 `grant_credit(test_coin)`, 피버 카운터 1, 풀 금액 프리셋) / **다음 판 당첨**(결과 강제, 최소형: 심볼 4개 중 하나, 1회용)
+- 게임 화면 왼쪽 위 (9, 9) `TEST` 라벨(주황, 판이 오염되면 빨강). 열기 조건: 릴·AUTO·정산 연출·피버/풀 오버레이·GAME OVER(대기 포함) 중에는 열리지 않음
+- `SlotLogic`: `set_fever_count(symbol, count, reference_bet)`, `set_pool(amount)`, `find_stops_with_win(symbol, line_bets)`, `spin(bet, forced_stops = [])` — 기본값이면 기존과 완전히 같고, 지정값이 있어도 `roll_stops()`를 먼저 불러 RNG를 소비한 뒤 바꿔치기하므로 강제한 판 뒤의 시드 순서는 변하지 않음
+- `GameState`: `test_tools_allowed()`, `test_grant_credit()`, `test_set_fever_count()`, `test_set_pool()`, `test_force_next_win()`, `forced_symbol()`, 시그널 `test_state_changed`. 모두 개발 빌드 + 테스트 모드 + 릴이 돌지 않을 때만 동작하고 `run_tainted`를 켠다(최고 기록 제외). 예약은 NEW GAME에서 풀림
+- 테스트: logic +27(91), state +54(239), view +123(910)
+
+### 변경
+- COIN 안내 문구 3곳·디버그 도움말 COIN 줄은 이미 `coin_allowed()` 기준이라 문구 변경은 없음(테스트 모드 꺼진 개발 빌드에서 버튼 회색과 문구가 일치함을 view_test로 확인)
+- `view_test.gd` 시작 부분에 `GameState.test_mode = true` 한 줄 (게임을 켜면 꺼진 채 시작하므로, COIN을 쓰는 기존 검사를 위해). 기존 검사는 고치지 않음
+- 기획서 5장(COIN 설명)·13장(F3)·15장(테스트 모드) 갱신
+- `balance.json`·`feel.json`·`economy.json`·`project.godot`·`user://` 저장 항목 변경 없음, 6단계·GAME OVER·시작 화면·설정 화면의 기존 좌표 변경 없음
+
+### 알려진 문제
+- 크레딧을 줄이는 기능(GAME OVER 만들기)은 넣지 않았다. GAME OVER는 미리보기와 실제 플레이(BET 64)로 확인
+- 테스트 모드를 끄는 것은 시작 화면에서만(게임 안에서는 끌 수 없음)
+
 ## 0.20.0 — 2026-11-11 (8-A: 운영자 설정)
 
 ### 추가

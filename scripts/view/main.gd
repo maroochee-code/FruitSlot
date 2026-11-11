@@ -37,6 +37,12 @@ const PAYTABLE_RECT: Rect2 = Rect2(450, 273, 180, 138)
 ## 디버그 창은 화면 오른쪽 절반을 덮는다 (하단 표시창 y=414 위에서 끝나도록 높이 406)
 const DEBUG_RECT: Rect2 = Rect2(300, 4, 336, 406)
 ## 하단 표시창 (y=414, 높이 57)
+## 테스트 모드 "TEST" 라벨: 왼쪽 위 빈 곳 (라인 라벨 x6~39·y90~, 보드 x42·y36~, 위쪽 라인 라벨 x92~ 사이)
+const TEST_LABEL_TEXT: String = "TEST"
+const TEST_LABEL_RECT: Rect2 = Rect2(9, 9, 30, 16)
+const TEST_COLOR: Color = Color("ff9a1f")
+const TEST_COLOR_TAINTED: Color = Color("ff4a4a")
+
 const BOTTOM_Y: float = 414.0
 const BOTTOM_H: float = 57.0
 const CREDIT_RECT: Rect2 = Rect2(9, BOTTOM_Y, 150, BOTTOM_H)
@@ -121,6 +127,9 @@ var _auto_button: Button
 var _coin_button: Button
 ## GAME OVER 화면 (7-B). 크레딧이 0이 된 판의 연출이 끝나고 gameover_delay_sec가 지나면 뜬다.
 var _game_over: GameOverOverlay
+## 테스트 모드(8-B): 개발 빌드에서만 만든다 (릴리즈에는 노드가 없다)
+var _test_menu: TestMenu
+var _test_label: Label
 ## GameState.game_over를 받았지만 아직 화면을 띄우지 않았는지, 띄우기까지 남은 시간 (연출이 끝난 뒤부터 센다)
 var _game_over_pending: bool = false
 var _game_over_delay_left: float = 0.0
@@ -162,6 +171,8 @@ func _ready() -> void:
 	_build_stop_buttons()
 	_build_settle_show()
 	_build_debug()
+	# 테스트 메뉴는 GAME OVER 오버레이보다 아래에 둔다 (GAME OVER 화면이 항상 가장 위, 메뉴는 GAME OVER 중에 열 수 없음)
+	_build_test_menu()
 	_build_game_over()
 	_build_sound()
 	_connect_state()
@@ -265,6 +276,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var key: InputEventKey = event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
+	# 테스트 메뉴(F3)가 열려 있거나 미리보기가 재생 중이면 키는 메뉴만 받는다
+	if _test_menu != null and (_test_menu.is_open() or _test_menu.is_previewing()):
+		_test_menu.handle_key(key)
+		return
 	# GAME OVER 화면이 떠 있는 동안은 화면용 키(←/→/스페이스/엔터)와 개발용 F1·F6만 받는다
 	if _game_over.is_open():
 		_handle_game_over_key(key)
@@ -290,6 +305,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			press_stop(2)
 		KEY_F1:
 			toggle_debug()
+		KEY_F3:
+			open_test_menu()
 		KEY_F6:
 			reload_feel()
 
@@ -507,6 +524,9 @@ func _connect_state() -> void:
 	GameState.spin_finished.connect(_on_spin_finished)
 	GameState.game_over.connect(_on_game_over)
 	GameState.new_game_started.connect(_on_new_game_started)
+	GameState.test_state_changed.connect(_on_test_state_changed)
+	GameState.credit_granted.connect(_on_test_flag_changed)
+	GameState.spin_started.connect(_on_test_flag_changed_spin)
 	_spin.reel_started.connect(_on_reel_started)
 	_spin.reel_stopped.connect(_on_reel_stopped)
 	_spin.all_stopped.connect(_on_all_stopped)
@@ -648,7 +668,82 @@ func _on_new_game_pressed() -> void:
 
 
 ## NEW GAME(또는 시작): 오른쪽 패널(POOL·피버 카운터)과 당첨선을 처음 상태로 다시 그린다
+## 테스트 모드(8-B) ---------------------------------------------------------
+
+## 테스트 메뉴를 연다 (F3). 개발 빌드 + 테스트 모드이고 판이 쉬는 중일 때만 true.
+## 릴 회전·AUTO·정산 연출·피버/풀 오버레이·GAME OVER(대기 포함) 중에는 열지 않는다.
+func open_test_menu() -> bool:
+	if _test_menu == null or not GameState.coin_allowed() or _test_menu_blocked():
+		return false
+	return _test_menu.open(_feel)
+
+
+func _test_menu_blocked() -> bool:
+	return GameState.spinning or GameState.auto_on or _settling or _settle.is_active() 		or _fever_overlay.is_playing() or _game_over.is_open() or _game_over_pending or GameState.is_game_over()
+
+
+func test_menu() -> TestMenu:
+	return _test_menu
+
+
+func test_label() -> Label:
+	return _test_label
+
+
+## 개발 빌드에서만 메뉴와 "TEST" 라벨을 만든다. 라벨은 왼쪽 위 빈 곳(라인 라벨 x6·보드 x42 사이, 위쪽 라인 라벨 x92 왼쪽)에 둔다.
+func _build_test_menu() -> void:
+	if not GameState.dev_build:
+		return
+	_test_label = Label.new()
+	_test_label.name = "TestLabel"
+	_test_label.text = TEST_LABEL_TEXT
+	_test_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_test_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_test_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UiFont.apply(_test_label, UiFont.Face.SMALL)
+	add_child(_test_label)
+	# 크기는 트리에 넣은 뒤에 정한다. 연출 오버레이(피버·GAME OVER) 아래에 둔다.
+	_test_label.position = TEST_LABEL_RECT.position
+	_test_label.size = TEST_LABEL_RECT.size
+	move_child(_test_label, _fever_overlay.get_index())
+	_test_menu = TestMenu.new()
+	add_child(_test_menu)
+	_test_menu.configure(_data, _sound, WIN_RECT.get_center(), CREDIT_RECT.get_center(), _set_bulb_mode)
+	_test_menu.message.connect(_announce_test)
+	_refresh_test_label()
+
+
+## 테스트 모드가 켜져 있을 때만 "TEST". 판이 오염(run_tainted)되면 색만 바뀐다.
+func _refresh_test_label() -> void:
+	if _test_label == null:
+		return
+	_test_label.visible = GameState.coin_allowed()
+	_test_label.add_theme_color_override("font_color", TEST_COLOR_TAINTED if GameState.run_tainted else TEST_COLOR)
+
+
+func _on_test_state_changed() -> void:
+	_refresh_side_panel(GameState.get_pool(), GameState.get_fever_counts())
+	_refresh_test_label()
+
+
+func _on_test_flag_changed(_amount: int, _reason: StringName) -> void:
+	_refresh_test_label()
+
+
+func _on_test_flag_changed_spin(_result: SpinResult) -> void:
+	_refresh_test_label()
+
+
+## 테스트 메뉴의 안내 글자를 안내 칸에 보여 준다 (회전 중이 아닐 때)
+func _announce_test(message: String) -> void:
+	print("[test] ", message)
+	if not GameState.spinning:
+		_notice_override = message
+		_refresh_notice()
+
+
 func _on_new_game_started() -> void:
+	_refresh_test_label()
 	_sync_game_over_screen()
 	_game_over_pending = false
 	_overlay.clear_wins()
@@ -744,6 +839,7 @@ func _start_fever_show() -> void:
 	_notice_override = ""
 	# 이번 스핀이 쓰는 설정(_feel)으로 재생 → 연출 도중 feel.json을 바꿔도 이번 연출은 그대로
 	_bgm.switch_to(BgmPlayer.TRACK_FEVER)
+	_fever_overlay.set_motion(_feel.fever_bg_frame_sec, _feel.fever_banner_flash_sec)
 	_fever_overlay.play(_fever_steps, _feel.fever_overlay_sec, _feel.fever_step_gap, _feel.fever_skip_lock_sec, _feel.pool_overlay_sec)
 	_refresh_buttons()
 	_refresh_notice()
@@ -1052,6 +1148,8 @@ func _build_sound() -> void:
 	add_child(_bgm)
 	_bgm.apply_feel(_feel)
 	_bgm.start()
+	if _test_menu != null:
+		_test_menu.set_sound(_sound)
 
 
 ## GAME OVER 화면: 피버 오버레이처럼 맨 위에 둔다 (둘은 동시에 뜨지 않는다)
