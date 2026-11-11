@@ -87,7 +87,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 ## 움직임이 켜져 있으면 feel.json 간격을, 꺼져 있으면 0(정지)을 오버레이에 준다
 func _apply_motion() -> void:
-	_overlay.set_motion(_feel.fever_bg_frame_sec if _motion else 0.0, _feel.fever_banner_flash_sec if _motion else 0.0)
+	_overlay.set_motion(_feel.fever_bg_frame_sec if _motion else 0.0, _feel.fever_banner_flash_sec if _motion else 0.0, _feel.pool_coin_frame_sec if _motion else 0.0)
 
 
 func _make_steps() -> Array[Dictionary]:

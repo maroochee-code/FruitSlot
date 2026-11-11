@@ -319,7 +319,7 @@ func _start_fever_preview(symbol: String) -> bool:
 		result.pool_won = GameState.get_pool()
 	_fever_steps = FeverOverlay.build_steps(result, _data)
 	close()
-	_fever.set_motion(_feel.fever_bg_frame_sec, _feel.fever_banner_flash_sec)
+	_fever.set_motion(_feel.fever_bg_frame_sec, _feel.fever_banner_flash_sec, _feel.pool_coin_frame_sec)
 	_fever.play(_fever_steps, _feel.fever_overlay_sec, _feel.fever_step_gap, _feel.fever_skip_lock_sec, _feel.pool_overlay_sec)
 	return true
 

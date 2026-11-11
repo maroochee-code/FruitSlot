@@ -74,6 +74,7 @@ func _ready() -> void:
 	await _test_settings_screen()
 	await _test_test_mode()
 	await _test_overlay_motion()
+	await _test_pool_coin_and_start_text()
 	print("==================== VIEW TEST: %d 통과 / %d 실패 ====================" % [_passed, _failed])
 	if quit_when_headless and DisplayServer.get_name() == "headless":
 		get_tree().quit(1 if _failed > 0 else 0)
@@ -3730,5 +3731,148 @@ func _test_overlay_motion() -> void:
 		if main.fever_playing():
 			names[game_bg.texture.resource_path.get_file()] = true
 	_check(names.size() >= 3 and not GameState.spinning, "main 실제 피버 흐름: 재생 중 배경 프레임이 여러 장 나옴 (%s)" % [names.keys()])
+	main.free()
+	await get_tree().process_frame
+
+
+# ---------------------------------------------------------------- POOL GET! 동전 회전, START 버튼 글자
+
+func _coin_frame(overlay: FeverOverlay, index: int) -> int:
+	var atlas: AtlasTexture = (overlay.get_node("CoinRow/Coin%d" % index) as TextureRect).texture as AtlasTexture
+	@warning_ignore("integer_division")
+	return int(atlas.region.position.x) / CoinSheet.FRAME_PX
+
+
+func _coin_frames(overlay: FeverOverlay) -> Array[int]:
+	var frames: Array[int] = []
+	for i: int in FeverOverlay.COIN_ROW_COUNT:
+		frames.append(_coin_frame(overlay, i))
+	return frames
+
+
+func _test_pool_coin_and_start_text() -> void:
+	var defaults: FeelConfig = FeelConfig.from_dict({})
+	_check(defaults.pool_coin_frame_sec == 0.06, "feel 새 키 pool_coin_frame_sec 기본값 0.06")
+	_check(FeelConfig.from_dict({ "pool_coin_frame_sec": 0.01 }).pool_coin_frame_sec == 0.06 and FeelConfig.from_dict({ "pool_coin_frame_sec": 1.5 }).pool_coin_frame_sec == 0.06, "범위 밖 값(0.02 미만 / 1 초과)은 기본값으로 대체")
+	_check(FeelConfig.from_dict({ "pool_coin_frame_sec": 0.02 }).pool_coin_frame_sec == 0.02 and FeelConfig.from_dict({ "pool_coin_frame_sec": 1.0 }).pool_coin_frame_sec == 1.0, "경계값 0.02 / 1.0은 그대로")
+	var real: FeelConfig = FeelConfig.load_from_file()
+	_check(real.errors.is_empty() and real.pool_coin_frame_sec == 0.06, "data/feel.json의 pool_coin_frame_sec = 0.06, 문제 없음")
+	var steps: Array[Dictionary] = [
+		{ "kind": FeverOverlay.KIND_FEVER, "symbol": "CHERRY", "name": "체리", "bonus": 100 },
+		{ "kind": FeverOverlay.KIND_POOL, "symbol": "", "name": FeverOverlay.POOL_NAME_TEXT, "bonus": 500 },
+	]
+	var overlay: FeverOverlay = FeverOverlay.new()
+	add_child(overlay)
+	await get_tree().process_frame
+	# 움직임을 켜지 않으면 정지 (기존 정적 배치: 동전 i = 프레임 i)
+	overlay.play(steps, 1.0, 0.3, 0.0, 1.0)
+	overlay.advance(1.5)
+	_check(_coin_frames(overlay) == [0, 1, 2, 3, 4], "set_motion을 부르지 않으면 동전이 정지 (프레임 0~4 나란히)")
+	overlay.advance(10.0)
+	# 동전 간격만 0이면 동전은 정지, 배경은 움직임
+	overlay.set_motion(0.25, 0.15, 0.0)
+	overlay.play(steps, 1.0, 0.3, 0.0, 1.0)
+	overlay.advance(1.5)
+	_check(_coin_frames(overlay) == [0, 1, 2, 3, 4], "동전 간격 0: 동전만 정지")
+	overlay.advance(10.0)
+	# 회전: SettleShow와 같은 식 (경과 / 간격 + i) % 6
+	overlay.set_motion(0.25, 0.15, 0.06)
+	overlay.play(steps, 1.0, 0.3, 0.0, 1.0)
+	_check(_coin_frames(overlay) == [0, 1, 2, 3, 4], "재생 시작: 0번 기준 (동전 i = 프레임 i)")
+	overlay.advance(1.4)
+	var expected: Array[int] = []
+	for i: int in 5:
+		expected.append(posmod(int(1.4 / 0.06) + i, CoinSheet.FRAME_COUNT))
+	_check(overlay.current_step() == 1 and _coin_frames(overlay) == expected, "풀 단계 1.4초: 동전 프레임 = (경과/0.06 + i) %% 6 (%s)" % [_coin_frames(overlay)])
+	var wave: bool = true
+	var frames_now: Array[int] = _coin_frames(overlay)
+	for i: int in 4:
+		wave = wave and posmod(frames_now[i + 1] - frames_now[i], CoinSheet.FRAME_COUNT) == 1
+	_check(wave, "동전마다 한 프레임씩 시차 (파도 모양)")
+	var before: Array[int] = _coin_frames(overlay)
+	overlay.advance(0.06)
+	var shifted: bool = true
+	for i: int in 5:
+		shifted = shifted and _coin_frames(overlay)[i] == posmod(before[i] + 1, CoinSheet.FRAME_COUNT)
+	_check(shifted, "간격(0.06초)이 지나면 모든 동전이 한 프레임씩 넘어감")
+	var seen: Dictionary = {}
+	for i: int in 10:
+		overlay.advance(0.03)
+		seen[_coin_frame(overlay, 0)] = true
+	_check(seen.size() >= 3, "재생 중 동전 프레임이 계속 바뀜")
+	# 끝나면 멈춤, 다시 재생하면 리셋
+	overlay.advance(10.0)
+	_check(not overlay.is_playing(), "재생이 끝남")
+	var ended: Array[int] = _coin_frames(overlay)
+	overlay.advance(1.0)
+	overlay.advance(0.37)
+	_check(_coin_frames(overlay) == ended, "끝난 뒤에는 동전 프레임이 더 바뀌지 않음")
+	overlay.play(steps, 1.0, 0.3, 0.0, 1.0)
+	_check(_coin_frames(overlay) == [0, 1, 2, 3, 4], "다시 재생하면 0번 기준으로 리셋")
+	# 건너뛰기
+	overlay.advance(1.5)
+	_check(overlay.skip() and not overlay.is_playing(), "건너뛰기: 정상 종료")
+	var skipped: Array[int] = _coin_frames(overlay)
+	overlay.advance(1.0)
+	_check(_coin_frames(overlay) == skipped, "건너뛴 뒤에도 동전 프레임이 더 바뀌지 않음")
+	# 배치·크기 불변
+	var fits: bool = true
+	for i: int in 5:
+		var coin: TextureRect = overlay.get_node("CoinRow/Coin%d" % i)
+		fits = fits and coin.position == Vector2((70 + i * 16) * 3, 52 * 3) and coin.size == Vector2(24, 24)
+	_check(fits, "동전 5개의 위치·크기는 그대로 (x 210 + 48×i, y 156, 24×24)")
+	overlay.free()
+	await get_tree().process_frame
+	# START 버튼 글자: 회전 중 STOP ALL / 연출 중 SKIP / 그 외 START
+	var main: Control = await _tm_main(95, 5000, 8)
+	var start: Button = main.get_node("StartButton")
+	_check(start.text == "START" and not start.disabled, "쉬는 중: START")
+	main.do_spin()
+	_check(GameState.spinning and start.text == "STOP ALL" and not start.disabled, "회전 중(남은 릴을 멈출 수 있음): STOP ALL, 활성")
+	_check(start.position == Vector2(189, 360) and start.size == Vector2(81, 36), "STOP ALL일 때도 버튼 좌표·크기는 그대로 (81×36)")
+	_check(start.get_minimum_size().x <= 81.0, "STOP ALL 글자가 버튼 폭 안에 들어감 (최소 폭 %d / 81 px)" % int(start.get_minimum_size().x))
+	_check(_notice(main).contains("STOP ALL") and not _notice(main).contains("START로"), "회전 중 안내 문구가 STOP ALL 기준")
+	_advance_for(main, 0.5)
+	main.do_spin()
+	_check(GameState.spinning and start.text == "START" and start.disabled, "START로 정지를 요청한 뒤(더는 쓸 수 없음): START, 회색")
+	_advance_for(main, 60.0)
+	_check(not GameState.spinning and start.text == "START" and not start.disabled, "판이 끝나면 START")
+	# STOP 1·2·3을 모두 눌러 남은 릴이 없으면 STOP ALL이 아님
+	main.do_spin()
+	_advance_for(main, 0.4)
+	for reel: int in 3:
+		main.press_stop(reel)
+	_check(GameState.spinning and start.text == "START" and start.disabled, "세 릴 모두 정지 요청: START(회색)")
+	_advance_for(main, 60.0)
+	# 피버·풀 연출 중 SKIP
+	GameState.test_force_next_win("SEVEN")
+	main.do_spin()
+	var skip_seen: bool = false
+	var stop_all_seen: bool = false
+	var guard: float = 0.0
+	var skip_enabled: bool = true
+	while guard < 90.0:
+		main.advance(0.05)
+		guard += 0.05
+		if main.fever_playing():
+			skip_seen = skip_seen or start.text == "SKIP"
+			skip_enabled = skip_enabled and not start.disabled and start.text == "SKIP"
+		elif GameState.spinning and start.text == "STOP ALL":
+			stop_all_seen = true
+	_check(stop_all_seen and skip_seen and skip_enabled, "릴 회전 중 STOP ALL → 피버·풀 연출 중 내내 SKIP(활성)")
+	_check(not main.fever_playing() and start.text == "START", "연출이 끝나면 START로 돌아옴")
+	# 건너뛰기 동작은 그대로: 연출 중 START = 건너뛰기
+	GameState.test_force_next_win("SEVEN")
+	main.do_spin()
+	guard = 0.0
+	while guard < 90.0 and not main.fever_playing():
+		main.advance(0.05)
+		guard += 0.05
+	_check(main.fever_playing() and start.text == "SKIP", "(준비) 피버 연출 중 SKIP")
+	_advance_for(main, 1.0)
+	start.pressed.emit()
+	_check(not main.fever_playing(), "SKIP 버튼(START 동작)으로 연출이 건너뛰어짐")
+	_advance_for(main, 60.0)
+	_check(start.text == "START", "건너뛴 뒤 START")
 	main.free()
 	await get_tree().process_frame

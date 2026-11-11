@@ -39,6 +39,10 @@ const DEBUG_RECT: Rect2 = Rect2(300, 4, 336, 406)
 ## 하단 표시창 (y=414, 높이 57)
 ## 테스트 모드 "TEST" 라벨: 왼쪽 위 빈 곳 (라인 라벨 x6~39·y90~, 보드 x42·y36~, 위쪽 라인 라벨 x92~ 사이)
 const TEST_LABEL_TEXT: String = "TEST"
+## START 버튼 글자 (상황별)
+const START_TEXT: String = "START"
+const START_TEXT_STOP_ALL: String = "STOP ALL"
+const START_TEXT_SKIP: String = "SKIP"
 const TEST_LABEL_RECT: Rect2 = Rect2(9, 9, 30, 16)
 const TEST_COLOR: Color = Color("ff9a1f")
 const TEST_COLOR_TAINTED: Color = Color("ff4a4a")
@@ -839,7 +843,7 @@ func _start_fever_show() -> void:
 	_notice_override = ""
 	# 이번 스핀이 쓰는 설정(_feel)으로 재생 → 연출 도중 feel.json을 바꿔도 이번 연출은 그대로
 	_bgm.switch_to(BgmPlayer.TRACK_FEVER)
-	_fever_overlay.set_motion(_feel.fever_bg_frame_sec, _feel.fever_banner_flash_sec)
+	_fever_overlay.set_motion(_feel.fever_bg_frame_sec, _feel.fever_banner_flash_sec, _feel.pool_coin_frame_sec)
 	_fever_overlay.play(_fever_steps, _feel.fever_overlay_sec, _feel.fever_step_gap, _feel.fever_skip_lock_sec, _feel.pool_overlay_sec)
 	_refresh_buttons()
 	_refresh_notice()
@@ -906,6 +910,15 @@ func _build_result_notice(result: SpinResult, lowered_from: int) -> String:
 	return "\n".join(parts)
 
 
+## START 버튼 글자(표시만): 피버·풀 연출 중 "SKIP"(건너뛰기), 회전 중이고 남은 릴을 멈출 수 있으면 "STOP ALL", 그 밖에는 "START". 동작·활성 조건은 그대로.
+func _start_button_text() -> String:
+	if _fever_overlay.is_playing():
+		return START_TEXT_SKIP
+	if GameState.spinning and _spin.can_quick_stop():
+		return START_TEXT_STOP_ALL
+	return START_TEXT
+
+
 ## 안내 문구: (일회성 안내 또는 상태 안내) + BET 8 미만이면 피버 안내
 func _refresh_notice() -> void:
 	var lines: PackedStringArray = PackedStringArray()
@@ -918,7 +931,7 @@ func _refresh_notice() -> void:
 		lines.append("피버 발동! 스페이스로 연출을 건너뛸 수 있습니다.")
 	elif GameState.spinning:
 		if not GameState.auto_on:
-			lines.append("STOP 1·2·3 또는 START로 릴을 멈추세요.")
+			lines.append("STOP 1·2·3 또는 STOP ALL(스페이스)로 릴을 멈추세요.")
 	elif GameState.credit < 1:
 		lines.append("COIN(C)으로 크레딧을 넣으세요." if GameState.coin_allowed() else NO_CREDIT_NOTICE)
 	elif GameState.bet < 1:
@@ -935,6 +948,7 @@ func _refresh_buttons() -> void:
 	# 회전 중에는 START가 "남은 릴 차례로 정지" 역할을 하므로 정지시킬 릴이 남아 있으면 켠다.
 	# 피버 연출 중에는 START(스페이스)가 "연출 건너뛰기"라서 켠다.
 	_start_button.disabled = not (GameState.can_start() or _spin.can_quick_stop() or _fever_overlay.is_playing())
+	_start_button.text = _start_button_text()
 	for i: int in _stop_buttons.size():
 		_stop_buttons[i].disabled = not _spin.can_stop(i) or GameState.auto_on
 	_auto_button.disabled = not GameState.can_toggle_auto()
@@ -1083,7 +1097,7 @@ func _build_buttons() -> void:
 	_cancel_button.pressed.connect(press_cancel)
 	_coin_button = _make_row_button("CoinButton", "COIN", 1)
 	_coin_button.pressed.connect(press_coin)
-	_start_button = _make_row_button("StartButton", "START", 2)
+	_start_button = _make_row_button("StartButton", START_TEXT, 2)
 	_start_button.pressed.connect(do_spin)
 	_bet_button = _make_row_button("BetButton", "BET", 3)
 	_bet_button.pressed.connect(press_bet)

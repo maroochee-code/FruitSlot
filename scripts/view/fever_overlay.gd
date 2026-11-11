@@ -74,6 +74,8 @@ var _banner_variant: int = 0
 ## 재생 중 배경 프레임·배너 색이 번갈아 바뀌는 간격 (초). 0 이하면 움직이지 않는다 (기본, set_motion으로 켠다)
 var _bg_frame_sec: float = 0.0
 var _banner_flash_sec: float = 0.0
+## 풀 단계 동전 회전 프레임 간격 (초). 0 이하면 동전도 정지
+var _coin_frame_sec: float = 0.0
 var _bg: TextureRect = TextureRect.new()
 var _bg_textures: Dictionary = {}
 var _banners: Dictionary = {}
@@ -194,9 +196,10 @@ func shown_texts() -> Dictionary:
 
 ## 배경 프레임·배너 색을 재생 시간(_elapsed)에 맞춰 번갈아 보이게 한다. 간격(초)은 feel.json의 fever_bg_frame_sec·fever_banner_flash_sec.
 ## 0 이하를 주면 그 항목은 움직이지 않는다. 화면 표시만 바꾸고 단계·시간·결과에는 영향이 없다. main과 테스트 메뉴가 play() 전에 부른다.
-func set_motion(bg_frame_sec: float, banner_flash_sec: float) -> void:
+func set_motion(bg_frame_sec: float, banner_flash_sec: float, coin_frame_sec: float = 0.0) -> void:
 	_bg_frame_sec = bg_frame_sec
 	_banner_flash_sec = banner_flash_sec
+	_coin_frame_sec = coin_frame_sec
 
 
 ## 배경 프레임 번호(0~2)를 바꾼다. 6-F의 움직임과 미리보기 씬이 쓴다.
@@ -313,6 +316,16 @@ func _apply_motion() -> void:
 		_bg_frame = posmod(int(_elapsed / _bg_frame_sec), BG_FRAME_COUNT)
 	if _banner_flash_sec > 0.0:
 		_banner_variant = posmod(int(_elapsed / _banner_flash_sec), BANNER_VARIANTS.size())
+	_apply_coin_motion()
+
+
+## 풀 단계 동전 5개를 SettleShow와 같은 식 (경과 / 간격 + i) % 6 으로 돌린다. 재생 시작(0초)에는 정적 배치와 같은 i번 프레임이다.
+func _apply_coin_motion() -> void:
+	if _coin_frame_sec <= 0.0:
+		return
+	var base: int = int(_elapsed / _coin_frame_sec)
+	for i: int in _coin_row.get_child_count():
+		(_coin_row.get_child(i) as TextureRect).texture = CoinSheet.frame(base + i)
 
 
 func _update() -> void:

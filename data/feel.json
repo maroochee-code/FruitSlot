@@ -45,5 +45,6 @@
 	"bgm_gameover_fade_sec": 0.5,
 	"title_blink_sec": 0.6,
 	"fever_bg_frame_sec": 0.25,
-	"fever_banner_flash_sec": 0.15
+	"fever_banner_flash_sec": 0.15,
+	"pool_coin_frame_sec": 0.06
 }

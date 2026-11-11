@@ -51,6 +51,7 @@ const SPECS: Dictionary = {
 	"title_blink_sec": [0.6, 0.2, 2.0],
 	"fever_bg_frame_sec": [0.25, 0.05, 2.0],
 	"fever_banner_flash_sec": [0.15, 0.05, 2.0],
+	"pool_coin_frame_sec": [0.06, 0.02, 1.0],
 }
 ## 정산 연출 크기 단계 (당첨 효과음 소/중/대와 같은 기준)
 const TIER_SMALL: int = 0
@@ -153,6 +154,8 @@ var title_blink_sec: float = 0.6
 ## 피버·풀 연출(6-F 연결): 방사형 배경 프레임 3장이 바뀌는 간격 / 배너 색 a·b가 바뀌는 간격 (초)
 var fever_bg_frame_sec: float = 0.25
 var fever_banner_flash_sec: float = 0.15
+## POOL GET! 연출의 동전 5개가 회전 프레임(6장)을 한 칸 넘기는 간격 (초). 동전마다 한 프레임씩 시차를 두어 파도처럼 돈다
+var pool_coin_frame_sec: float = 0.06
 ## 파일에서 읽다가 문제가 있어 기본값으로 대체한 항목 설명
 var errors: PackedStringArray = PackedStringArray()
 ## 파일을 읽고 JSON으로 해석하는 데 성공했는지 (항목별 범위 문제와는 별개)
